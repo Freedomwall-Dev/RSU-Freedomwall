@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no">
+    <title>RSU FreedomWall - Share Your Thoughts</title>
+    <meta name="description" content="RSU FreedomWall - Share your thoughts, confessions, and encouragements anonymously or with your name. Connect with fellow students without judgment.">
+    <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16.png">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="manifest" href="/manifest.json">
+    <!-- iOS icons -->
+    <link rel="apple-touch-icon" sizes="16x16" href="/ios/16.png">
+    <link rel="apple-touch-icon" sizes="20x20" href="/ios/20.png">
+    <link rel="apple-touch-icon" sizes="29x29" href="/ios/29.png">
+    <link rel="apple-touch-icon" sizes="32x32" href="/ios/32.png">
+    <link rel="apple-touch-icon" sizes="40x40" href="/ios/40.png">
+    <link rel="apple-touch-icon" sizes="50x50" href="/ios/50.png">
+    <link rel="apple-touch-icon" sizes="57x57" href="/ios/57.png">
+    <link rel="apple-touch-icon" sizes="58x58" href="/ios/58.png">
+    <link rel="apple-touch-icon" sizes="60x60" href="/ios/60.png">
+    <link rel="apple-touch-icon" sizes="64x64" href="/ios/64.png">
+    <link rel="apple-touch-icon" sizes="72x72" href="/ios/72.png">
+    <link rel="apple-touch-icon" sizes="76x76" href="/ios/76.png">
+    <link rel="apple-touch-icon" sizes="80x80" href="/ios/80.png">
+    <link rel="apple-touch-icon" sizes="87x87" href="/ios/87.png">
+    <link rel="apple-touch-icon" sizes="100x100" href="/ios/100.png">
+    <link rel="apple-touch-icon" sizes="114x114" href="/ios/114.png">
+    <link rel="apple-touch-icon" sizes="120x120" href="/ios/120.png">
+    <link rel="apple-touch-icon" sizes="128x128" href="/ios/128.png">
+    <link rel="apple-touch-icon" sizes="144x144" href="/ios/144.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/ios/152.png">
+    <link rel="apple-touch-icon" sizes="167x167" href="/ios/167.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/ios/180.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="/ios/192.png">
+    <link rel="apple-touch-icon" sizes="256x256" href="/ios/256.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="/ios/512.png">
+    <!-- Enable standalone (PWA) mode on iOS -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="RSU Freedomwall">
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+    <!-- reCAPTCHA v3 -->
+    <script src="https://www.google.com/recaptcha/api.js?render=6Lcaq6IrAAAAAJ9JR4z19HGCQVsUbZvStdoLeipj"></script>
+    
+    <script type="importmap">
+    {
+      "imports": {
+        "firebase/app": "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js"
+      }
+    }
+    </script>
+</head>
+<body>
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">
+        <div class="toast-content">
+            <i class="fas fa-check-circle"></i>
+            <span class="toast-message"></span>
+        </div>
+    </div>
+
+    <!-- Terms Modal -->
+    <div id="termsModal" class="modal">
+        <div class="modal-content">
+            <h2>Terms and Conditions</h2>
+            <div class="terms-content">
+                <p>Welcome to RSU FreedomWall! Before you start posting, please read and agree to our terms:</p>
+                <ul>
+                    <li><i class="fas fa-check-circle"></i> Be respectful to others</li>
+                    <li><i class="fas fa-check-circle"></i> No hate speech or discrimination</li>
+                    <li><i class="fas fa-check-circle"></i> No bullying or harassment</li>
+                    <li><i class="fas fa-check-circle"></i> No personal attacks</li>
+                    <li><i class="fas fa-check-circle"></i> No inappropriate content</li>
+                    <li><i class="fas fa-circle-exclamation"></i>You can only post 7 notes per hour.</li>
+                </ul>
+                <p>Violations may result in the removal of content and the suspension or permanent restriction of access to this platform. By using this platform, you agree to these terms.</p>
+                <div class="terms-checkbox">
+                    <input type="checkbox" id="dontShowAgain">
+                    <label for="dontShowAgain">Don't show this again today</label>
+                </div>
+            </div>
+            <div class="recaptcha-disclaimer">
+                <small>This site is protected by reCAPTCHA and the Google 
+                    <a href="https://policies.google.com/privacy" target="_blank">Privacy Policy</a> and
+                    <a href="https://policies.google.com/terms" target="_blank">Terms of Service</a> apply.
+                </small>
+            </div>
+            <div class="modal-actions">
+                <button id="agreeBtn" class="btn">I Agree</button>
+                <button id="disagreeBtn" class="btn btn-outline">Disagree</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Post Form Modal -->
+    <div id="postModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <h2>Post a Note</h2>    
+            <form id="noteForm">
+                <div class="form-group">
+                    <label for="message">Your Message*</label>
+                    <textarea id="message" required maxlength="400" placeholder="Write your message here..."></textarea>
+                    <div class="char-counter"><span id="char-count">0</span>/400</div>
+                </div>
+                <div class="form-group">
+                    <label for="name">Your Name (optional)</label>
+                    <input type="text" id="name" placeholder="Anonymous" maxlength="50">
+                </div>
+
+                <div class="form-group">
+                    <label>Note Color</label>
+                    <div class="color-options">
+                        <button type="button" class="color-option" data-color="#FFEB3B"></button> <!-- Yellow -->
+                        <button type="button" class="color-option" data-color="#80D8FF"></button> <!-- Sky Blue -->
+                        <button type="button" class="color-option" data-color="#A5D6A7"></button> <!-- Mint Green -->
+                        <button type="button" class="color-option" data-color="#FFD180"></button> <!-- Peach -->
+                        <button type="button" class="color-option" data-color="#FF80AB"></button> <!-- Pink -->
+                        <button type="button" class="color-option" data-color="#CF93FF"></button> <!-- Lavender -->
+                        <button type="button" class="color-option" data-color="#FF9E80"></button> <!-- Coral -->
+                    </div>
+                    <input type="hidden" id="selectedColor" value="#FFEB3B">
+                </div>
+
+                <button type="submit" class="btn" id="submitBtn">
+                    <span class="btn-text">Post Note</span>
+                    <span class="btn-spinner" style="display: none;">
+                        <div class="loader"></div>
+                    </span>
+                </button>
+            </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <h1>RSU FreedomWall</h1>
+                </div>
+            </div>
+            <nav class="nav">
+                <ul>
+                    <li><a href="index.html" class="active"><i class="fas fa-home"></i> Home</a></li>
+                    <li><a href="about.html"><i class="fas fa-info-circle"></i> About</a></li>
+                    <li><a href="contact.html"><i class="fas fa-envelope"></i> Contact</a></li>
+                </ul>
+            </nav>
+            <div class="sidebar-footer">
+                <button id="themeToggle" class="btn btn-icon">
+                    <i class="fas fa-moon"></i> Dark Mode
+                </button>
+                <button id="postNoteBtn" class="btn">
+                    <i class="fas fa-plus"></i> Post a Note
+                </button>
+            </div>
+        </aside>
+
+        <!-- Mobile Header -->
+        <header class="mobile-header">
+            <button id="menuToggle" class="btn btn-icon" aria-label="Open menu">
+                <i class="fas fa-bars"></i>
+            </button>
+            <h1>RSU FreedomWall</h1>
+            <button id="mobilePostBtn" class="btn btn-icon">
+                <i class="fas fa-plus"></i>
+            </button>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="notes-container" id="notesContainer">
+                <!-- Notes will be loaded here -->
+                <div class="loading">
+                    <div class="spinner-container">
+                        <div class="loading-spinner">
+                            <div class="loader"></div>
+                            <p>Loading notes...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Pagination will be inserted here by JavaScript -->
+        </main>
+    </div>
+
+    <script>
+        if ("serviceWorker" in navigator) {
+            window.addEventListener("load", () => {
+                navigator.serviceWorker
+                    .register("./service-worker.js")
+                    .then((registration) => {
+                        console.log("Service Worker registered with scope:", registration.scope);
+                    })
+                    .catch((error) => {
+                        console.log("Service Worker registration failed:", error);
+                    });
+            }); 
+        }
+    </script>
+
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
