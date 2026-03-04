@@ -263,7 +263,18 @@ async function generateSecureHash(token, deviceId, timestamp) {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-
+async function createVerificationRecord(token, deviceId) {
+    const timestamp = Date.now();
+    const verificationId = `${deviceId}-${timestamp}`;
+    const secureHash = await generateSecureHash(token, deviceId, timestamp);
+    await setDoc(doc(db, 'recaptchaVerifications', verificationId), {
+        deviceId, tokenHash: secureHash, timestamp,
+        createdAt: serverTimestamp(),
+        expiresAt: new Date(timestamp + 5 * 60 * 1000),
+        used: false, verified: true
+    });
+    return verificationId;
+}
 
 async function checkBan(deviceId) {
     try {
@@ -498,42 +509,38 @@ function getCachedData(page) {
 function startRealtimeListener() {
     if (isListenerActive || !currentDeviceId) return;
     try {
-        const listenLimit = notesPerPage * 10; // covers up to 10 pages
+        // Only listen to the most recent notes for new-post detection
         const q = query(
             collection(db, 'notes'),
             orderBy('createdAt', 'desc'),
-            limit(listenLimit)
+            limit(notesPerPage)
         );
-        
+
+        let isFirstSnapshot = true;
+
         currentListener = onSnapshot(q, (snapshot) => {
-            const allVisible = [];
-            snapshot.forEach(docSnap => {
-                const data = docSnap.data();
-                if (data.isDeleted !== true) allVisible.push({ id: docSnap.id, ...data });
-            });
-
-            totalNotes = Math.max(allVisible.length, memoryCache.totalNotes || 0);
-            totalPages = Math.ceil(totalNotes / notesPerPage);
-
-            let pageStart = (currentPage - 1) * notesPerPage;
-            let pageNotes = allVisible.slice(pageStart, pageStart + notesPerPage);
-
-            // If current page is now empty, move back one page
-            if (pageNotes.length === 0 && currentPage > 1) {
-                currentPage = Math.max(1, currentPage - 1);
-                sessionStorage.setItem('lastPageLoaded', currentPage.toString());
-                pageStart = (currentPage - 1) * notesPerPage;
-                pageNotes = allVisible.slice(pageStart, pageStart + notesPerPage);
+            // Skip the initial snapshot — loadNotes() already rendered the page
+            if (isFirstSnapshot) {
+                isFirstSnapshot = false;
+                return;
             }
 
-            updateMemoryCache(currentPage, pageNotes, totalNotes);
-            updateNotesUI(pageNotes, false);
-            createPaginationControls();
+            // Only react to structural changes (new note or soft-delete), ignore reactions/views
+            const hasStructuralChange = snapshot.docChanges().some(change => {
+                if (change.type === 'added') return true;
+                if (change.type === 'modified' && change.doc.data().isDeleted === true) return true;
+                return false;
+            });
+
+            if (!hasStructuralChange) return;
+
+            // Let loadNotes handle the full re-fetch and render correctly
+            loadNotes();
         }, (error) => {
             console.warn('Real-time listener error:', error);
             isListenerActive = false;
         });
-        
+
         isListenerActive = true;
     } catch (error) {
         console.warn('Failed to start real-time listener:', error);
@@ -560,12 +567,37 @@ function updateNotesUI(notesData, showLoading = false) {
             </div>`;
         return;
     }
-    notesContainer.innerHTML = '';
     const visibleNotes = notesData.filter(n => n.isDeleted !== true);
-    if (visibleNotes.length === 0) {
-        notesContainer.innerHTML = '<div class="no-notes">No notes yet. Be the first to post!</div>';
+
+    function renderNotes() {
+        notesContainer.innerHTML = '';
+        if (visibleNotes.length === 0) {
+            notesContainer.innerHTML = '<div class="no-notes">No notes yet. Be the first to post!</div>';
+            return;
+        }
+        visibleNotes.forEach((noteData, i) => {
+            const el = createNoteElement(noteData);
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(16px)';
+            el.style.transition = `opacity 0.3s ease ${i * 40}ms, transform 0.3s ease ${i * 40}ms`;
+            notesContainer.appendChild(el);
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                el.style.opacity = '1';
+                el.style.transform = 'translateY(0)';
+            }));
+        });
+    }
+
+    const existingCards = notesContainer.querySelectorAll('.note-card');
+    if (existingCards.length > 0) {
+        existingCards.forEach(card => {
+            card.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(6px)';
+        });
+        setTimeout(renderNotes, 150);
     } else {
-        visibleNotes.forEach(noteData => addNoteToContainer(noteData));
+        renderNotes();
     }
 }
 
@@ -579,23 +611,22 @@ function addNewNoteToUI(noteData) {
     const noNotesElement = notesContainer.querySelector('.no-notes');
     if (noNotesElement) noNotesElement.remove();
     const noteElement = createNoteElement(noteData);
+    // Animate in from top
     noteElement.style.opacity = '0';
-    noteElement.style.transform = 'translateY(-30px) scale(0.95)';
-    noteElement.style.transition = 'none';
+    noteElement.style.transform = 'translateY(-20px) scale(0.97)';
+    noteElement.style.transition = 'opacity 0.45s cubic-bezier(0.16,1,0.3,1), transform 0.45s cubic-bezier(0.16,1,0.3,1)';
     notesContainer.insertBefore(noteElement, notesContainer.firstChild);
-    noteElement.offsetHeight;
-    noteElement.style.transition = 'all 0.6s cubic-bezier(0.16, 1, 0.3, 1)';
-    requestAnimationFrame(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
         noteElement.style.opacity = '1';
         noteElement.style.transform = 'translateY(0) scale(1)';
-    });
-    // FIX: Keep exactly notesPerPage notes on screen — push overflow off the bottom
+    }));
+    // Push overflow note off the bottom with fade
     const allNotes = notesContainer.querySelectorAll('.note-card');
     if (allNotes.length > notesPerPage) {
         const lastNote = allNotes[allNotes.length - 1];
-        lastNote.style.transition = 'all 0.3s ease-out';
+        lastNote.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
         lastNote.style.opacity = '0';
-        lastNote.style.transform = 'translateY(20px) scale(0.95)';
+        lastNote.style.transform = 'translateY(12px)';
         setTimeout(() => { if (lastNote.parentNode) lastNote.remove(); }, 300);
     }
     totalNotes++;
@@ -688,6 +719,7 @@ function updateCharCount() {
 
 async function getTotalNotesCount() {
     try {
+        // Count ALL docs — we correct for deleted ones after fetching
         const snapshot = await getCountFromServer(query(collection(db, 'notes')));
         return snapshot.data().count;
     } catch (error) {
@@ -696,11 +728,60 @@ async function getTotalNotesCount() {
     }
 }
 
+function buildPaginationHTML() {
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, currentPage + 2);
+    if (endPage - startPage < 4) {
+        if (startPage === 1) endPage = Math.min(totalPages, startPage + 4);
+        else if (endPage === totalPages) startPage = Math.max(1, endPage - 4);
+    }
+
+    let pageNumbersHTML = '';
+    if (startPage > 1) {
+        pageNumbersHTML += `<button class="pagination-btn page-number" onclick="goToPage(1)">1</button>`;
+        if (startPage > 2) pageNumbersHTML += `<span class="pagination-ellipsis">...</span>`;
+    }
+    for (let i = startPage; i <= endPage; i++) {
+        pageNumbersHTML += `<button class="pagination-btn page-number${i === currentPage ? ' active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+    }
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) pageNumbersHTML += `<span class="pagination-ellipsis">...</span>`;
+        pageNumbersHTML += `<button class="pagination-btn page-number" onclick="goToPage(${totalPages})">${totalPages}</button>`;
+    }
+
+    return {
+        prevDisabled: currentPage === 1,
+        nextDisabled: currentPage === totalPages,
+        pageNumbersHTML,
+        pageInfoText: `Page ${currentPage} of ${totalPages} (${totalNotes} total notes)`
+    };
+}
+
 function createPaginationControls() {
     const notesContainer = document.getElementById('notesContainer');
-    const existingPagination = document.getElementById('paginationContainer');
-    if (existingPagination) existingPagination.remove();
-    if (totalPages <= 1) return;
+    if (!notesContainer) return;
+
+    if (totalPages <= 1) {
+        const existing = document.getElementById('paginationContainer');
+        if (existing) existing.remove();
+        return;
+    }
+
+    const { prevDisabled, nextDisabled, pageNumbersHTML, pageInfoText } = buildPaginationHTML();
+
+    // Update in-place if already exists — prevents layout jump / twitching
+    const existing = document.getElementById('paginationContainer');
+    if (existing) {
+        const prevBtn = existing.querySelector('.pagination-btn:first-child');
+        const nextBtn = existing.querySelector('.pagination-btn:last-child');
+        const pageNumbers = existing.querySelector('.page-numbers');
+        const pageInfo = existing.querySelector('.page-info');
+        if (prevBtn) { prevBtn.disabled = prevDisabled; prevBtn.className = `pagination-btn ${prevDisabled ? 'disabled' : ''}`; }
+        if (nextBtn) { nextBtn.disabled = nextDisabled; nextBtn.className = `pagination-btn ${nextDisabled ? 'disabled' : ''}`; }
+        if (pageNumbers) pageNumbers.innerHTML = pageNumbersHTML;
+        if (pageInfo) pageInfo.textContent = pageInfoText;
+        return;
+    }
 
     const paginationContainer = document.createElement('div');
     paginationContainer.id = 'paginationContainer';
@@ -710,61 +791,19 @@ function createPaginationControls() {
     pagination.className = 'pagination';
 
     const prevBtn = document.createElement('button');
-    prevBtn.className = `pagination-btn ${currentPage === 1 ? 'disabled' : ''}`;
+    prevBtn.className = `pagination-btn ${prevDisabled ? 'disabled' : ''}`;
     prevBtn.innerHTML = '<i class="fas fa-chevron-left"></i> Previous';
-    prevBtn.disabled = currentPage === 1;
+    prevBtn.disabled = prevDisabled;
     prevBtn.onclick = () => goToPage(currentPage - 1);
 
     const pageNumbers = document.createElement('div');
     pageNumbers.className = 'page-numbers';
-
-    let startPage = Math.max(1, currentPage - 2);
-    let endPage = Math.min(totalPages, currentPage + 2);
-    if (endPage - startPage < 4) {
-        if (startPage === 1) endPage = Math.min(totalPages, startPage + 4);
-        else if (endPage === totalPages) startPage = Math.max(1, endPage - 4);
-    }
-
-    if (startPage > 1) {
-        const firstBtn = document.createElement('button');
-        firstBtn.className = 'pagination-btn page-number';
-        firstBtn.textContent = '1';
-        firstBtn.onclick = () => goToPage(1);
-        pageNumbers.appendChild(firstBtn);
-        if (startPage > 2) {
-            const ellipsis = document.createElement('span');
-            ellipsis.className = 'pagination-ellipsis';
-            ellipsis.textContent = '...';
-            pageNumbers.appendChild(ellipsis);
-        }
-    }
-
-    for (let i = startPage; i <= endPage; i++) {
-        const pageBtn = document.createElement('button');
-        pageBtn.className = `pagination-btn page-number ${i === currentPage ? 'active' : ''}`;
-        pageBtn.textContent = i;
-        pageBtn.onclick = () => goToPage(i);
-        pageNumbers.appendChild(pageBtn);
-    }
-
-    if (endPage < totalPages) {
-        if (endPage < totalPages - 1) {
-            const ellipsis = document.createElement('span');
-            ellipsis.className = 'pagination-ellipsis';
-            ellipsis.textContent = '...';
-            pageNumbers.appendChild(ellipsis);
-        }
-        const lastBtn = document.createElement('button');
-        lastBtn.className = 'pagination-btn page-number';
-        lastBtn.textContent = totalPages;
-        lastBtn.onclick = () => goToPage(totalPages);
-        pageNumbers.appendChild(lastBtn);
-    }
+    pageNumbers.innerHTML = pageNumbersHTML;
 
     const nextBtn = document.createElement('button');
-    nextBtn.className = `pagination-btn ${currentPage === totalPages ? 'disabled' : ''}`;
+    nextBtn.className = `pagination-btn ${nextDisabled ? 'disabled' : ''}`;
     nextBtn.innerHTML = 'Next <i class="fas fa-chevron-right"></i>';
-    nextBtn.disabled = currentPage === totalPages;
+    nextBtn.disabled = nextDisabled;
     nextBtn.onclick = () => goToPage(currentPage + 1);
 
     pagination.appendChild(prevBtn);
@@ -773,7 +812,7 @@ function createPaginationControls() {
 
     const pageInfo = document.createElement('div');
     pageInfo.className = 'page-info';
-    pageInfo.textContent = `Page ${currentPage} of ${totalPages} (${totalNotes} total notes)`;
+    pageInfo.textContent = pageInfoText;
 
     paginationContainer.appendChild(pagination);
     paginationContainer.appendChild(pageInfo);
@@ -784,8 +823,9 @@ async function goToPage(pageNumber) {
     if (pageNumber < 1 || pageNumber > totalPages || pageNumber === currentPage || isLoading) return;
     currentPage = pageNumber;
     sessionStorage.setItem('lastPageLoaded', pageNumber.toString());
-    await loadNotes();
+    // Scroll to top first, then load — avoids scroll being cancelled by re-render
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    await loadNotes();
 }
 
 // =============================================================================
@@ -795,67 +835,50 @@ async function goToPage(pageNumber) {
 async function loadNotes() {
     if (isLoading) return;
     isLoading = true;
-    const notesContainer = document.getElementById('notesContainer');
 
-    // Show cached UI immediately
-    const cachedData = getCachedData(currentPage);
-    if (cachedData) {
-        const visibleCached = cachedData.notes.filter(n => n.isDeleted !== true);
-        updateNotesUI(visibleCached, false);
-        totalNotes = cachedData.totalNotes;
-        totalPages = Math.ceil(totalNotes / notesPerPage);
-        createPaginationControls();
-    }
-    if (!cachedData) updateNotesUI([], true);
+    const notesContainer = document.getElementById('notesContainer');
+    // Show spinner only on first load (no cached data yet)
+    if (!memoryCache.totalNotes) updateNotesUI([], true);
 
     try {
-        // Always fresh count from Firestore
-        totalNotes = await getTotalNotesCount();
-        totalPages = Math.ceil(totalNotes / notesPerPage);
+        // Step 1: Get raw total so we know roughly how many pages exist
+        const rawTotal = await getTotalNotesCount();
 
-        // FIX: If restored session page is now out of range, reset to 1
-        if (currentPage > totalPages && totalPages > 0) {
-            currentPage = 1;
-            sessionStorage.setItem('lastPageLoaded', '1');
-        }
-
-        if (totalNotes === 0) {
-            notesContainer.innerHTML = '<div class="no-notes">No notes yet. Be the first to post!</div>';
-            isLoading = false;
-            createPaginationControls();
-            return;
-        }
-
-        const offset = (currentPage - 1) * notesPerPage;
-
-        /**
-         * FIX: Gap-fill strategy — fetch (offset + notesPerPage + 20) docs so
-         * that after filtering soft-deleted notes we always have a full page.
-         */
-        const fetchLimit = offset + notesPerPage + 20;
+        // Step 2: Fetch enough docs to fill the current page even with deleted gaps
+        // We fetch from the beginning up to well past the current page
+        const fetchLimit = (currentPage * notesPerPage) + 100;
         const q = query(
             collection(db, 'notes'),
             orderBy('createdAt', 'desc'),
             limit(fetchLimit)
         );
-
         const snapshot = await getDocs(q);
+
+        // Step 3: Filter deleted, build the visible list
         const allVisible = [];
         snapshot.forEach(docSnap => {
             const data = docSnap.data();
             if (data.isDeleted !== true) allVisible.push({ id: docSnap.id, ...data });
         });
 
-        let visibleNotes = allVisible.slice(offset, offset + notesPerPage);
+        // Step 4: Derive accurate totals from visible count + remaining raw docs
+        // allVisible may be less than rawTotal due to deleted docs in the fetched window
+        // Use whichever gives the most accurate page count
+        const deletedInWindow = snapshot.size - allVisible.length;
+        totalNotes = Math.max(0, rawTotal - deletedInWindow);
+        totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
 
-        // If this page is empty after deletes, go back one page
-        if (visibleNotes.length === 0 && currentPage > 1) {
-            currentPage = Math.max(1, currentPage - 1);
+        // Step 5: Guard against out-of-range page (e.g. after deletes)
+        if (currentPage > totalPages) {
+            currentPage = totalPages;
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
-            const newOffset = (currentPage - 1) * notesPerPage;
-            visibleNotes = allVisible.slice(newOffset, newOffset + notesPerPage);
         }
 
+        // Step 6: Slice exactly this page's notes
+        const offset = (currentPage - 1) * notesPerPage;
+        const visibleNotes = allVisible.slice(offset, offset + notesPerPage);
+
+        // Step 7: Single render — no double-flash
         updateMemoryCache(currentPage, visibleNotes, totalNotes);
         updateNotesUI(visibleNotes, false);
         createPaginationControls();
@@ -864,15 +887,13 @@ async function loadNotes() {
 
     } catch (error) {
         console.error('Error loading notes:', error);
-        if (!cachedData) {
-            notesContainer.innerHTML = `
-                <div class="error">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <p>Error loading notes. Please check your connection.</p>
-                    <button onclick="loadNotes()" class="retry-btn">Try Again</button>
-                </div>`;
-            showToast('Error loading notes', true);
-        }
+        notesContainer.innerHTML = `
+            <div class="error">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p>Error loading notes. Please check your connection.</p>
+                <button onclick="loadNotes()" class="retry-btn">Try Again</button>
+            </div>`;
+        showToast('Error loading notes', true);
     } finally {
         isLoading = false;
     }
@@ -918,7 +939,7 @@ function createNoteElement(noteData) {
 
     const messageDiv = document.createElement('div');
     messageDiv.className = 'note-message';
-    messageDiv.innerHTML = linkify(note.message).replace(/\n/g, '<br>');
+    messageDiv.innerHTML = linkify(note.message);
 
     const authorDiv = document.createElement('div');
     authorDiv.className = 'note-author';
@@ -965,7 +986,111 @@ function createNoteElement(noteData) {
     noteElement.appendChild(authorDiv);
     noteElement.appendChild(bottomDiv);
 
+    // Resize handle — shown only when text overflows
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'note-resize-handle';
+    resizeHandle.setAttribute('aria-label', 'Drag to resize note');
+    noteElement.appendChild(resizeHandle);
+
+    // Check overflow after element is fully painted and sized in the DOM
+    setTimeout(() => checkNoteOverflow(noteElement, messageDiv, resizeHandle), 100);
+
     return noteElement;
+}
+
+function checkNoteOverflow(noteElement, messageDiv, resizeHandle) {
+    // -webkit-line-clamp collapses scrollHeight so we can't use it directly.
+    // Instead, clone the element without clamping and measure its natural height.
+    const clone = messageDiv.cloneNode(true);
+    clone.style.cssText = [
+        'position:absolute',
+        'visibility:hidden',
+        'pointer-events:none',
+        'width:' + messageDiv.offsetWidth + 'px',
+        'height:auto',
+        'max-height:none',
+        '-webkit-line-clamp:unset',
+        'line-clamp:unset',
+        'display:block',
+        'overflow:visible',
+        'white-space:pre-wrap',
+        'word-wrap:break-word',
+        'line-height:' + getComputedStyle(messageDiv).lineHeight,
+        'font-size:' + getComputedStyle(messageDiv).fontSize,
+        'font-family:' + getComputedStyle(messageDiv).fontFamily,
+        'padding:' + getComputedStyle(messageDiv).padding
+    ].join(';');
+    document.body.appendChild(clone);
+    const naturalHeight = clone.offsetHeight;
+    document.body.removeChild(clone);
+
+    if (naturalHeight > messageDiv.clientHeight + 2) {
+        noteElement.classList.add('is-overflowing');
+    }
+    attachResizeDrag(noteElement, resizeHandle);
+}
+
+function attachResizeDrag(noteElement, resizeHandle) {
+    let startY = 0;
+    let startHeight = 0;
+    let isDragging = false;
+    const MIN_HEIGHT = noteElement.offsetHeight || 216;
+    const COLLAPSE_THRESHOLD = MIN_HEIGHT + 30;
+
+    function setHeight(px) {
+        noteElement.style.height = px + 'px';
+    }
+
+    function collapse() {
+        // Animate down to original size, then restore full CSS control
+        noteElement.style.transition = 'height 0.22s ease';
+        setHeight(MIN_HEIGHT);
+        setTimeout(() => {
+            noteElement.style.transition = '';
+            noteElement.style.height = '';   // hand back to CSS
+            noteElement.classList.remove('is-expanded');
+        }, 230);
+    }
+
+    function onDragStart(e) {
+        e.preventDefault();
+        isDragging = true;
+        startY = e.touches ? e.touches[0].clientY : e.clientY;
+        startHeight = noteElement.offsetHeight;
+        noteElement.style.transition = 'none';
+        // Explicitly set px height so CSS class height:auto doesn't interfere
+        setHeight(startHeight);
+        noteElement.classList.add('is-expanded');
+        document.addEventListener('mousemove', onDragMove);
+        document.addEventListener('touchmove', onDragMove, { passive: false });
+        document.addEventListener('mouseup', onDragEnd);
+        document.addEventListener('touchend', onDragEnd);
+    }
+
+    function onDragMove(e) {
+        if (!isDragging) return;
+        e.preventDefault();
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const delta = clientY - startY;
+        setHeight(Math.max(MIN_HEIGHT, startHeight + delta));
+    }
+
+    function onDragEnd() {
+        if (!isDragging) return;
+        isDragging = false;
+        document.removeEventListener('mousemove', onDragMove);
+        document.removeEventListener('touchmove', onDragMove);
+        document.removeEventListener('mouseup', onDragEnd);
+        document.removeEventListener('touchend', onDragEnd);
+        if (noteElement.offsetHeight <= COLLAPSE_THRESHOLD) {
+            collapse();
+        } else {
+            noteElement.style.transition = '';
+        }
+    }
+
+    resizeHandle.addEventListener('mousedown', onDragStart);
+    resizeHandle.addEventListener('touchstart', onDragStart, { passive: false });
 }
 
 function addNoteToContainer(docData) {
@@ -1003,21 +1128,10 @@ async function submitNote(e) {
         if (!message) throw new Error('Message is required');
         if (message.length > 400) throw new Error('Message too long (max 400 chars)');
 
-        const [ip, recaptchaToken] = await Promise.all([
-            getUserIP(),
-            executeRecaptcha('post_note')
-        ]);
-
-        const timestamp = Date.now();
-        const verificationId = `${deviceId}-${timestamp}`;
-        generateSecureHash(recaptchaToken, deviceId, timestamp).then(secureHash => {
-            setDoc(doc(db, 'recaptchaVerifications', verificationId), {
-                deviceId, tokenHash: secureHash, timestamp,
-                createdAt: serverTimestamp(),
-                expiresAt: new Date(timestamp + 5 * 60 * 1000),
-                used: false, verified: true
-            }).catch(e => console.warn('Verification record skipped:', e));
-        });
+        const ip = await getUserIP();
+        const recaptchaToken = await executeRecaptcha('post_note');
+        const verificationId = await createVerificationRecord(recaptchaToken, deviceId);
+        await new Promise(resolve => setTimeout(resolve, 500));
 
         const noteData = {
             message, name, color, ip, deviceId,
@@ -1102,6 +1216,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('noteForm')?.addEventListener('submit', submitNote);
     document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
     document.getElementById('menuToggle')?.addEventListener('click', toggleSidebar);
+    document.getElementById('closeSidebar')?.addEventListener('click', () => {
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) sidebar.classList.remove('open');
+    });
     document.getElementById('agreeBtn')?.addEventListener('click', agreeToTerms);
     document.getElementById('disagreeBtn')?.addEventListener('click', disagreeToTerms);
     document.getElementById('message')?.addEventListener('input', updateCharCount);

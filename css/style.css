@@ -176,7 +176,8 @@ body.modal-open {
     gap: 16px;
     margin-top: 48px;
     width: 100%;
-    min-height: 400px; /* Added to ensure consistent height */
+    min-height: 400px;
+    contain: layout style;
 }
 
 .note-card {
@@ -188,9 +189,9 @@ body.modal-open {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* Enhanced transition */
-    transform: translateZ(0); /* Force hardware acceleration */
-    backface-visibility: hidden; /* Prevent flickering */
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateZ(0);
+    backface-visibility: hidden;
     background-color: var(--card-bg);
 }
 
@@ -414,10 +415,11 @@ body.modal-open {
     padding-right: 4px;
     line-height: 1.5;
     display: -webkit-box;
-    -webkit-line-clamp: 6; /* Reduced to make room for bottom section */
+    -webkit-line-clamp: 6;
     line-clamp: 6;
     -webkit-box-orient: vertical;
     text-overflow: ellipsis;
+    white-space: pre-wrap;
 }
 
 .note-author {
@@ -560,18 +562,7 @@ body.modal-open {
     margin: 24px auto;
     text-align: center;
     max-width: 800px;
-    animation: fadeInUp 0.3s ease-out; /* Smooth appearance */
-}
-
-@keyframes fadeInUp {
-    0% {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    100% {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    /* No entrance animation — pagination updates in-place to prevent twitching */
 }
 
 .pagination {
@@ -581,6 +572,7 @@ body.modal-open {
     gap: 8px;
     margin-bottom: 16px;
     flex-wrap: wrap;
+    min-height: 50px;
 }
 
 .pagination-btn {
@@ -1465,35 +1457,65 @@ body.modal-open {
         margin-bottom: -4.4px;
     }
 
-    /* Mobile pagination adjustments */
+    /* Mobile pagination */
     .pagination-container {
-        margin: 26.4px auto;
+        margin: 16px 8px;
+        padding: 0;
     }
-    
+
     .pagination {
-        gap: 4.4px;
-        margin-bottom: 17.6px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        margin-bottom: 10px;
+        flex-wrap: nowrap;
+        min-height: unset;
     }
-    
-    .pagination-btn {
-        padding: 6.6px 8.8px;
-        font-size: 0.935rem;
-        min-width: 39.6px;
-        gap: 6.6px;
+
+    /* Prev / Next: icon only on mobile to save space */
+    .pagination-btn:first-child,
+    .pagination-btn:last-child {
+        flex-shrink: 0;
+        padding: 8px 10px;
+        font-size: 0;   /* hide text */
+        min-width: 36px;
+        height: 36px;
+        border-radius: 8px;
     }
-    
-    .page-number {
-        min-width: 35.2px;
-        padding: 6.6px 8.8px;
+
+    .pagination-btn:first-child i,
+    .pagination-btn:last-child i {
+        font-size: 0.85rem; /* show only icon */
     }
-    
+
+    .page-numbers {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        flex: 1;
+        flex-wrap: nowrap;
+        overflow: hidden;
+    }
+
+    .pagination-btn.page-number {
+        min-width: 34px;
+        height: 36px;
+        padding: 0;
+        font-size: 0.85rem;
+        border-radius: 8px;
+    }
+
     .pagination-ellipsis {
-        padding: 8.8px 4.4px;
+        padding: 0 2px;
+        font-size: 0.85rem;
     }
-    
+
     .page-info {
-        font-size: 0.88rem;
-        margin-top: 8.8px;
+        font-size: 0.78rem;
+        opacity: 0.65;
+        margin-top: 6px;
     }
 }
 
@@ -1511,24 +1533,22 @@ body.modal-open {
         padding: 17.6px 13.2px;
     }
     
-    /* Very small screen pagination */
+    /* Very small screen pagination — tighter */
     .pagination {
-        justify-content: center;
-        flex-wrap: wrap;
-    }
-    
-    .pagination-btn:first-child,
-    .pagination-btn:last-child {
-        order: unset;      /* Keep normal order */
-        flex: unset;       /* Remove flex-grow */
-        max-width: unset;  /* Remove forced max width */
+        gap: 4px;
     }
 
-    /* Keep page numbers inline with prev/next */
-    .page-numbers {
-        order: unset;
-        width: auto;
-        margin: 0;
+    .pagination-btn:first-child,
+    .pagination-btn:last-child {
+        min-width: 32px;
+        height: 32px;
+        padding: 8px;
+    }
+
+    .pagination-btn.page-number {
+        min-width: 30px;
+        height: 32px;
+        font-size: 0.8rem;
     }
 }
 
@@ -1536,15 +1556,22 @@ body.modal-open {
     .color-options {
         justify-content: flex-start;
     }
-    
-    .pagination-btn {
-        font-size: 0.8rem;
-        padding: 4px 6px;
+
+    .pagination-btn:first-child,
+    .pagination-btn:last-child {
+        min-width: 30px;
+        height: 30px;
     }
-    
-    .page-number {
+
+    .pagination-btn.page-number {
         min-width: 28px;
-        padding: 4px 6px;
+        height: 30px;
+        font-size: 0.75rem;
+    }
+
+    .pagination-ellipsis {
+        font-size: 0.75rem;
+        padding: 0 1px;
     }
 }
 
@@ -1649,4 +1676,68 @@ body.modal-open {
 @keyframes menuFadeIn {
     from { opacity: 0; transform: translateY(-8px); }
     to { opacity: 1; transform: translateY(0); }
+}
+/* ── Resize Handle ─────────────────────────────────────────────────────────── */
+/* Only visible when the note text is overflowing (.is-overflowing class) */
+.note-resize-handle {
+    display: none; /* hidden by default */
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 18px;
+    cursor: ns-resize;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0 0 8px 8px;
+    background: linear-gradient(to top, rgba(0,0,0,0.08), transparent);
+    transition: background 0.2s ease;
+    z-index: 5;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.note-resize-handle::after {
+    content: '';
+    display: block;
+    width: 28px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(0,0,0,0.25);
+    box-shadow: 0 -4px 0 rgba(0,0,0,0.15);
+}
+
+[data-theme="dark"] .note-resize-handle {
+    background: linear-gradient(to top, rgba(255,255,255,0.08), transparent);
+}
+[data-theme="dark"] .note-resize-handle::after {
+    background: rgba(255,255,255,0.3);
+    box-shadow: 0 -4px 0 rgba(255,255,255,0.15);
+}
+
+.note-resize-handle:hover {
+    background: linear-gradient(to top, rgba(0,0,0,0.18), transparent);
+}
+
+/* Show handle only when text overflows */
+.note-card.is-overflowing .note-resize-handle {
+    display: flex;
+}
+
+/* When expanded, allow full text to show */
+.note-card.is-expanded {
+    /* No height here — JS controls it via inline style during expand/collapse */
+    min-height: 216px;
+}
+
+.note-card.is-expanded .note-message {
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+    overflow: visible;
+    display: block;
+}
+
+/* While actively being dragged, ensure height is never auto */
+.note-card.is-dragging {
+    height: auto;
 }
