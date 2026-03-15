@@ -2,7 +2,8 @@ import { db } from './firebase-config.js';
 import { 
     collection, addDoc, setDoc, serverTimestamp, onSnapshot, query, 
     orderBy, limit, startAfter, where, getCountFromServer, getDocs,
-    doc, getDoc, runTransaction, updateDoc, arrayUnion, arrayRemove, increment
+    doc, getDoc, runTransaction, updateDoc, arrayUnion, arrayRemove, increment,
+    writeBatch
 } from "firebase/firestore";
 
 // =============================================================================
@@ -29,9 +30,16 @@ let totalPages = 0;
 let isLoading = false;
 let lastVisible = null;
 
-const CACHE_DURATION = 5 * 60 * 1000;
+const CACHE_DURATION = 20 * 60 * 1000; // OPT: extended from 5 → 20 mins
 const CACHE_KEY_NOTES = 'cachedNotes';
 const CACHE_KEY_TIMESTAMP = 'cacheTimestamp';
+
+// OPT: stores last Firestore doc snapshot per page for cursor-based pagination
+const pageCursors = new Map(); // key: pageNumber → lastVisible doc snapshot
+
+// OPT: batched view increments — collected during render, flushed once
+const pendingViews = new Set();
+let viewFlushTimer = null;
 
 let memoryCache = {
     notes: new Map(),
@@ -139,20 +147,18 @@ async function toggleReaction(noteId, noteElement) {
         const noteRef = doc(db, 'notes', noteId);
         const reactionBtn = noteElement.querySelector('.reaction-btn');
         reactionBtn.disabled = true;
-        const noteDoc = await getDoc(noteRef);
-        if (!noteDoc.exists()) {
-            showToast('Note not found', true);
-            reactionBtn.disabled = false;
-            return;
-        }
-        const noteData = noteDoc.data();
-        const currentReactions = noteData.reactions || [];
-        const hasReacted = currentReactions.includes(currentDeviceId);
+
+        // OPT: removed redundant getDoc — transaction already reads the doc.
+        // We derive hasReacted + count optimistically from the UI instead.
+        const heartIcon = reactionBtn.querySelector('i');
+        const hasReacted = heartIcon && heartIcon.classList.contains('fas');
+        const countSpan = reactionBtn.querySelector('.reaction-count');
+        const currentCount = parseInt(countSpan?.textContent || '0', 10);
+
         await runTransaction(db, async (transaction) => {
             const freshNoteDoc = await transaction.get(noteRef);
             if (!freshNoteDoc.exists()) throw new Error("Note does not exist!");
-            const freshData = freshNoteDoc.data();
-            const freshReactions = freshData.reactions || [];
+            const freshReactions = freshNoteDoc.data().reactions || [];
             const stillHasReacted = freshReactions.includes(currentDeviceId);
             if (stillHasReacted && hasReacted) {
                 transaction.update(noteRef, { reactions: arrayRemove(currentDeviceId) });
@@ -160,8 +166,9 @@ async function toggleReaction(noteId, noteElement) {
                 transaction.update(noteRef, { reactions: arrayUnion(currentDeviceId) });
             }
         });
+
         const newHasReacted = !hasReacted;
-        const newCount = hasReacted ? currentReactions.length - 1 : currentReactions.length + 1;
+        const newCount = hasReacted ? currentCount - 1 : currentCount + 1;
         updateReactionUI(noteElement, noteId, newHasReacted, newCount);
     } catch (error) {
         console.error('Error toggling reaction:', error);
@@ -180,19 +187,52 @@ function updateReactionUI(noteElement, noteId, hasReacted, reactionCount) {
     heartIcon.className = hasReacted ? 'fas fa-heart' : 'far fa-heart';
     reactionBtn.classList.toggle('reacted', hasReacted);
     countSpan.textContent = reactionCount || 0;
+
+    // OPT: patch in-memory cache so the updated count survives a re-render
+    // without needing a Firestore re-fetch
+    const pageKey = currentPage.toString();
+    const cachedPage = memoryCache.notes.get(pageKey);
+    if (cachedPage) {
+        const noteIndex = cachedPage.findIndex(n => n.id === noteId);
+        if (noteIndex !== -1) {
+            const reactions = cachedPage[noteIndex].reactions || [];
+            if (hasReacted && !reactions.includes(currentDeviceId)) {
+                cachedPage[noteIndex].reactions = [...reactions, currentDeviceId];
+            } else if (!hasReacted) {
+                cachedPage[noteIndex].reactions = reactions.filter(id => id !== currentDeviceId);
+            }
+            memoryCache.notes.set(pageKey, cachedPage);
+        }
+    }
 }
 
-async function incrementView(noteId, viewedBy) {
+// OPT: instead of one updateDoc per note (12 writes per page load),
+// collect all unseen note IDs and flush them in a single batch after 3s.
+function queueViewIncrement(noteId, viewedBy) {
     if (!currentDeviceId) return;
     if (viewedBy && viewedBy.includes(currentDeviceId)) return;
+    pendingViews.add(noteId);
+    // Reset the debounce timer so we wait until all notes have been queued
+    clearTimeout(viewFlushTimer);
+    viewFlushTimer = setTimeout(flushPendingViews, 3000);
+}
+
+async function flushPendingViews() {
+    if (!pendingViews.size || !currentDeviceId) return;
+    const ids = [...pendingViews];
+    pendingViews.clear();
+    // OPT: writeBatch sends all view increments in one round-trip
     try {
-        const noteRef = doc(db, 'notes', noteId);
-        await updateDoc(noteRef, {
-            viewedBy: arrayUnion(currentDeviceId),
-            viewCount: increment(1)
+        const batch = writeBatch(db);
+        ids.forEach(noteId => {
+            batch.update(doc(db, 'notes', noteId), {
+                viewedBy: arrayUnion(currentDeviceId),
+                viewCount: increment(1)
+            });
         });
+        await batch.commit();
     } catch (error) {
-        console.warn('View count skipped:', error);
+        console.warn('Batch view flush skipped:', error);
     }
 }
 
@@ -203,6 +243,7 @@ window.deleteNote = async function(noteId) {
         const noteRef = doc(db, 'notes', noteId);
         await updateDoc(noteRef, { isDeleted: true, deviceId: currentDeviceId });
 
+        // Animate out
         const el = document.querySelector(`[data-note-id="${noteId}"]`);
         if (el) {
             el.style.transition = 'all 0.3s ease';
@@ -213,9 +254,35 @@ window.deleteNote = async function(noteId) {
         }
 
         showToast('Note deleted successfully');
-        clearCache();
-        stopRealtimeListener();
-        await loadNotes(); // Full reload fills the gap on the current page
+
+        // OPT: patch the cache locally instead of clearing + full re-fetch.
+        // Remove the note from the cached page and update totals in place.
+        const pageKey = currentPage.toString();
+        const cachedPage = memoryCache.notes.get(pageKey) || [];
+        const updatedPage = cachedPage.filter(n => n.id !== noteId);
+        totalNotes = Math.max(0, totalNotes - 1);
+        totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
+        memoryCache.totalNotes = totalNotes;
+
+        // Cursors are stale after a delete — clear them so next navigation
+        // re-fetches with correct offsets
+        pageCursors.clear();
+
+        if (updatedPage.length === 0 && currentPage > 1) {
+            // Page became empty — step back and do a real fetch
+            currentPage--;
+            sessionStorage.setItem('lastPageLoaded', currentPage.toString());
+            clearCache();
+            stopRealtimeListener();
+            await loadNotes();
+        } else {
+            // Page still has notes — re-render from the patched cache, no fetch
+            memoryCache.notes.set(pageKey, updatedPage);
+            memoryCache.timestamp = Date.now();
+            saveCacheToStorage();
+            updateNotesUI(updatedPage, false);
+            createPaginationControls();
+        }
     } catch (error) {
         console.error('Delete failed:', error);
         showToast('You cannot delete this note.', true);
@@ -472,6 +539,7 @@ function clearCache() {
     localStorage.removeItem(CACHE_KEY_NOTES);
     localStorage.removeItem(CACHE_KEY_TIMESTAMP);
     sessionStorage.removeItem('lastPageLoaded');
+    pageCursors.clear(); // OPT: invalidate cursors when data changes (post/delete)
 }
 
 function updateMemoryCache(page, notesData, totalCount) {
@@ -507,11 +575,14 @@ function getCachedData(page) {
  * and refreshes the UI whenever Firestore pushes any change.
  */
 function startRealtimeListener() {
-    if (isListenerActive || !currentDeviceId) return;
+    // OPT: listener only runs on page 1 — no point listening for new posts
+    // on page 5 since they appear at the top (page 1) anyway.
+    if (isListenerActive || !currentDeviceId || currentPage !== 1) return;
     try {
-        // Only listen to the most recent notes for new-post detection
+        // FIX: same server-side filter as loadNotes — only listen to visible notes
         const q = query(
             collection(db, 'notes'),
+            where('isDeleted', '==', false),
             orderBy('createdAt', 'desc'),
             limit(notesPerPage)
         );
@@ -519,22 +590,14 @@ function startRealtimeListener() {
         let isFirstSnapshot = true;
 
         currentListener = onSnapshot(q, (snapshot) => {
-            // Skip the initial snapshot — loadNotes() already rendered the page
-            if (isFirstSnapshot) {
-                isFirstSnapshot = false;
-                return;
-            }
+            if (isFirstSnapshot) { isFirstSnapshot = false; return; }
 
-            // Only react to structural changes (new note or soft-delete), ignore reactions/views
+            // Only reload on new additions — deletions are handled locally now
             const hasStructuralChange = snapshot.docChanges().some(change => {
-                if (change.type === 'added') return true;
-                if (change.type === 'modified' && change.doc.data().isDeleted === true) return true;
-                return false;
+                return change.type === 'added';
             });
 
             if (!hasStructuralChange) return;
-
-            // Let loadNotes handle the full re-fetch and render correctly
             loadNotes();
         }, (error) => {
             console.warn('Real-time listener error:', error);
@@ -611,7 +674,6 @@ function addNewNoteToUI(noteData) {
     const noNotesElement = notesContainer.querySelector('.no-notes');
     if (noNotesElement) noNotesElement.remove();
     const noteElement = createNoteElement(noteData);
-    // Animate in from top
     noteElement.style.opacity = '0';
     noteElement.style.transform = 'translateY(-20px) scale(0.97)';
     noteElement.style.transition = 'opacity 0.45s cubic-bezier(0.16,1,0.3,1), transform 0.45s cubic-bezier(0.16,1,0.3,1)';
@@ -632,6 +694,23 @@ function addNewNoteToUI(noteData) {
     totalNotes++;
     totalPages = Math.ceil(totalNotes / notesPerPage);
     createPaginationControls();
+
+    // OPT: patch page 1 cache to include the new note so the next cache hit
+    // returns up-to-date data without a Firestore re-fetch.
+    // Also invalidate page cursors since the new note shifted all offsets.
+    const page1Cache = memoryCache.notes.get('1') || [];
+    const serialized = {
+        ...noteData,
+        createdAt: noteData.createdAt instanceof Date
+            ? noteData.createdAt.getTime()
+            : noteData.createdAt
+    };
+    const updated = [serialized, ...page1Cache].slice(0, notesPerPage);
+    memoryCache.notes.set('1', updated);
+    memoryCache.totalNotes = totalNotes;
+    memoryCache.timestamp = Date.now();
+    pageCursors.clear(); // cursors are now stale — new note shifted all offsets
+    saveCacheToStorage();
 }
 
 // =============================================================================
@@ -718,13 +797,21 @@ function updateCharCount() {
 // =============================================================================
 
 async function getTotalNotesCount() {
+    // OPT: reuse cached total within the 20-min window — zero reads
+    if (memoryCache.totalNotes !== null && isCacheValid(memoryCache.timestamp)) {
+        return memoryCache.totalNotes;
+    }
     try {
-        // Count ALL docs — we correct for deleted ones after fetching
-        const snapshot = await getCountFromServer(query(collection(db, 'notes')));
+        // FIX: only count visible notes — deleted notes were inflating totalPages,
+        // causing empty pages and broken pagination (Gemini fix #2)
+        const snapshot = await getCountFromServer(
+            query(collection(db, 'notes'), where('isDeleted', '==', false))
+        );
         return snapshot.data().count;
     } catch (error) {
-        console.warn('Error getting notes count:', error);
-        return 0;
+        // Bubble up to loadNotes() catch block so quota errors show the
+        // correct RSUvians message instead of silently returning 0
+        throw error;
     }
 }
 
@@ -823,7 +910,8 @@ async function goToPage(pageNumber) {
     if (pageNumber < 1 || pageNumber > totalPages || pageNumber === currentPage || isLoading) return;
     currentPage = pageNumber;
     sessionStorage.setItem('lastPageLoaded', pageNumber.toString());
-    // Scroll to top first, then load — avoids scroll being cancelled by re-render
+    // OPT: stop listener when leaving page 1 — new posts only appear on page 1
+    if (currentPage !== 1) stopRealtimeListener();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     await loadNotes();
 }
@@ -837,48 +925,65 @@ async function loadNotes() {
     isLoading = true;
 
     const notesContainer = document.getElementById('notesContainer');
-    // Show spinner only on first load (no cached data yet)
     if (!memoryCache.totalNotes) updateNotesUI([], true);
 
     try {
-        // Step 1: Get raw total so we know roughly how many pages exist
+        // OPT: serve from cache if still valid — zero Firestore reads
+        const cached = getCachedData(currentPage);
+        if (cached) {
+            totalNotes = cached.totalNotes;
+            totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
+            updateNotesUI(cached.notes, false);
+            createPaginationControls();
+            if (!isListenerActive) startRealtimeListener();
+            return;
+        }
+
+        // OPT: count only non-deleted notes for accurate pagination
         const rawTotal = await getTotalNotesCount();
-
-        // Step 2: Fetch enough docs to fill the current page even with deleted gaps
-        // We fetch from the beginning up to well past the current page
-        const fetchLimit = (currentPage * notesPerPage) + 100;
-        const q = query(
-            collection(db, 'notes'),
-            orderBy('createdAt', 'desc'),
-            limit(fetchLimit)
-        );
-        const snapshot = await getDocs(q);
-
-        // Step 3: Filter deleted, build the visible list
-        const allVisible = [];
-        snapshot.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data.isDeleted !== true) allVisible.push({ id: docSnap.id, ...data });
-        });
-
-        // Step 4: Derive accurate totals from visible count + remaining raw docs
-        // allVisible may be less than rawTotal due to deleted docs in the fetched window
-        // Use whichever gives the most accurate page count
-        const deletedInWindow = snapshot.size - allVisible.length;
-        totalNotes = Math.max(0, rawTotal - deletedInWindow);
+        totalNotes = rawTotal;
         totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
 
-        // Step 5: Guard against out-of-range page (e.g. after deletes)
         if (currentPage > totalPages) {
             currentPage = totalPages;
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
         }
 
-        // Step 6: Slice exactly this page's notes
-        const offset = (currentPage - 1) * notesPerPage;
-        const visibleNotes = allVisible.slice(offset, offset + notesPerPage);
+        // FIX: server-side filter — where('isDeleted','==',false) means Firestore
+        // only sends visible notes. We are no longer charged for deleted docs.
+        // Requires a composite index: isDeleted ASC + createdAt DESC (Gemini fix #1).
+        // No FETCH_BUFFER needed anymore — every returned doc is a visible note.
+        const cursor = currentPage > 1 ? pageCursors.get(currentPage - 1) : null;
+        let q;
+        if (cursor) {
+            q = query(
+                collection(db, 'notes'),
+                where('isDeleted', '==', false),
+                orderBy('createdAt', 'desc'),
+                startAfter(cursor),
+                limit(notesPerPage)
+            );
+        } else {
+            q = query(
+                collection(db, 'notes'),
+                where('isDeleted', '==', false),
+                orderBy('createdAt', 'desc'),
+                limit(notesPerPage)
+            );
+        }
 
-        // Step 7: Single render — no double-flash
+        const snapshot = await getDocs(q);
+
+        const visibleNotes = [];
+        let lastDoc = null;
+        snapshot.forEach(docSnap => {
+            lastDoc = docSnap;
+            visibleNotes.push({ id: docSnap.id, ...docSnap.data() });
+        });
+
+        // Store cursor at the end of this page for the next page's startAfter()
+        if (lastDoc) pageCursors.set(currentPage, lastDoc);
+
         updateMemoryCache(currentPage, visibleNotes, totalNotes);
         updateNotesUI(visibleNotes, false);
         createPaginationControls();
@@ -887,13 +992,25 @@ async function loadNotes() {
 
     } catch (error) {
         console.error('Error loading notes:', error);
+        // Surface missing Firestore index URL directly in the console
+        if (error.message && error.message.includes('https://')) {
+            const indexUrl = error.message.match(/https:\/\/\S+/)?.[0];
+            if (indexUrl) {
+                console.error('%c⚠ Missing Firestore index — click to create it automatically:', 'color: orange; font-weight: bold; font-size: 14px;');
+                console.error('%c' + indexUrl, 'color: #4fc3f7; text-decoration: underline;');
+            }
+        }
+        const isQuotaExceeded = error.code === 'resource-exhausted' ||
+                                error.message.includes('quota');
         notesContainer.innerHTML = `
             <div class="error">
                 <i class="fas fa-exclamation-triangle"></i>
-                <p>Error loading notes. Please check your connection.</p>
-                <button onclick="loadNotes()" class="retry-btn">Try Again</button>
+                <p>${isQuotaExceeded
+                    ? "The Freedom Wall is resting! We've hit our daily visitor limit. Please come back tomorrow morning, RSUvians!"
+                    : "Error loading notes. Please check your connection."}</p>
+                ${!isQuotaExceeded ? '<button onclick="loadNotes()" class="retry-btn">Try Again</button>' : ''}
             </div>`;
-        showToast('Error loading notes', true);
+        showToast(isQuotaExceeded ? 'Daily limit reached' : 'Error loading notes', true);
     } finally {
         isLoading = false;
     }
@@ -907,7 +1024,7 @@ function createNoteElement(noteData) {
     const noteId = noteData.id;
     const note = noteData;
     const isAuthor = note.deviceId === currentDeviceId;
-    setTimeout(() => incrementView(noteId, note.viewedBy), 2000);
+    setTimeout(() => queueViewIncrement(noteId, note.viewedBy), 2000); // OPT: batched
 
     const noteElement = document.createElement('div');
     noteElement.className = 'note-card';
@@ -982,25 +1099,24 @@ function createNoteElement(noteData) {
     reactionDiv.appendChild(reactionBtn);
     bottomDiv.appendChild(viewDiv);
     bottomDiv.appendChild(reactionDiv);
-    noteElement.appendChild(messageDiv);
+
+    // Wrap message + inline see-more in a content block
+    const contentBlock = document.createElement('div');
+    contentBlock.className = 'note-content';
+    contentBlock.appendChild(messageDiv);
+
+    noteElement.appendChild(contentBlock);
     noteElement.appendChild(authorDiv);
     noteElement.appendChild(bottomDiv);
 
-    // Resize handle — shown only when text overflows
-    const resizeHandle = document.createElement('div');
-    resizeHandle.className = 'note-resize-handle';
-    resizeHandle.setAttribute('aria-label', 'Drag to resize note');
-    noteElement.appendChild(resizeHandle);
-
-    // Check overflow after element is fully painted and sized in the DOM
-    setTimeout(() => checkNoteOverflow(noteElement, messageDiv, resizeHandle), 100);
+    // Check overflow and add inline See more after rendering
+    setTimeout(() => checkNoteOverflow(noteElement, messageDiv, contentBlock), 100);
 
     return noteElement;
 }
 
-function checkNoteOverflow(noteElement, messageDiv, resizeHandle) {
-    // -webkit-line-clamp collapses scrollHeight so we can't use it directly.
-    // Instead, clone the element without clamping and measure its natural height.
+function checkNoteOverflow(noteElement, messageDiv, contentBlock) {
+    // Clone without clamping to measure natural height
     const clone = messageDiv.cloneNode(true);
     clone.style.cssText = [
         'position:absolute',
@@ -1026,71 +1142,29 @@ function checkNoteOverflow(noteElement, messageDiv, resizeHandle) {
 
     if (naturalHeight > messageDiv.clientHeight + 2) {
         noteElement.classList.add('is-overflowing');
+
+        // Inline See more — appended inside the content block, after the message
+        const seeMoreBtn = document.createElement('button');
+        seeMoreBtn.className = 'see-more-btn';
+        seeMoreBtn.textContent = 'See more';
+        contentBlock.appendChild(seeMoreBtn);
+
+        seeMoreBtn.addEventListener('click', () => {
+            const isExpanded = noteElement.classList.toggle('is-expanded');
+            seeMoreBtn.textContent = isExpanded ? 'See less' : 'See more';
+            if (isExpanded) {
+                messageDiv.style.webkitLineClamp = 'unset';
+                messageDiv.style.lineClamp = 'unset';
+                messageDiv.style.overflow = 'visible';
+                messageDiv.style.display = 'block';
+            } else {
+                messageDiv.style.webkitLineClamp = '';
+                messageDiv.style.lineClamp = '';
+                messageDiv.style.overflow = '';
+                messageDiv.style.display = '';
+            }
+        });
     }
-    attachResizeDrag(noteElement, resizeHandle);
-}
-
-function attachResizeDrag(noteElement, resizeHandle) {
-    let startY = 0;
-    let startHeight = 0;
-    let isDragging = false;
-    const MIN_HEIGHT = noteElement.offsetHeight || 216;
-    const COLLAPSE_THRESHOLD = MIN_HEIGHT + 30;
-
-    function setHeight(px) {
-        noteElement.style.height = px + 'px';
-    }
-
-    function collapse() {
-        // Animate down to original size, then restore full CSS control
-        noteElement.style.transition = 'height 0.22s ease';
-        setHeight(MIN_HEIGHT);
-        setTimeout(() => {
-            noteElement.style.transition = '';
-            noteElement.style.height = '';   // hand back to CSS
-            noteElement.classList.remove('is-expanded');
-        }, 230);
-    }
-
-    function onDragStart(e) {
-        e.preventDefault();
-        isDragging = true;
-        startY = e.touches ? e.touches[0].clientY : e.clientY;
-        startHeight = noteElement.offsetHeight;
-        noteElement.style.transition = 'none';
-        // Explicitly set px height so CSS class height:auto doesn't interfere
-        setHeight(startHeight);
-        noteElement.classList.add('is-expanded');
-        document.addEventListener('mousemove', onDragMove);
-        document.addEventListener('touchmove', onDragMove, { passive: false });
-        document.addEventListener('mouseup', onDragEnd);
-        document.addEventListener('touchend', onDragEnd);
-    }
-
-    function onDragMove(e) {
-        if (!isDragging) return;
-        e.preventDefault();
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        const delta = clientY - startY;
-        setHeight(Math.max(MIN_HEIGHT, startHeight + delta));
-    }
-
-    function onDragEnd() {
-        if (!isDragging) return;
-        isDragging = false;
-        document.removeEventListener('mousemove', onDragMove);
-        document.removeEventListener('touchmove', onDragMove);
-        document.removeEventListener('mouseup', onDragEnd);
-        document.removeEventListener('touchend', onDragEnd);
-        if (noteElement.offsetHeight <= COLLAPSE_THRESHOLD) {
-            collapse();
-        } else {
-            noteElement.style.transition = '';
-        }
-    }
-
-    resizeHandle.addEventListener('mousedown', onDragStart);
-    resizeHandle.addEventListener('touchstart', onDragStart, { passive: false });
 }
 
 function addNoteToContainer(docData) {
@@ -1172,30 +1246,12 @@ async function submitNote(e) {
 }
 
 // =============================================================================
-// 13. DATABASE REPAIR (once per session)
+// 13. DATABASE REPAIR — DISABLED
 // =============================================================================
-
-async function repairDatabase() {
-    // FIX: Gated by sessionStorage — only runs once per browser session
-    if (sessionStorage.getItem(REPAIR_DONE_KEY)) return;
-    sessionStorage.setItem(REPAIR_DONE_KEY, '1');
-    try {
-        const q = query(collection(db, 'notes'), limit(20));
-        const snapshot = await getDocs(q);
-        snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            if (data.isDeleted === undefined) {
-                updateDoc(doc(db, 'notes', docSnap.id), {
-                    isDeleted: false,
-                    viewCount: data.viewCount || 0,
-                    viewedBy: data.viewedBy || []
-                });
-            }
-        });
-    } catch (e) {
-        console.warn("Repair script skipped:", e);
-    }
-}
+// All notes now have isDeleted defined. The server-side where('isDeleted','==',false)
+// filter in loadNotes() is the safety net. Re-enable only if you add a new field
+// that needs backfilling across old documents.
+async function repairDatabase() { return; }
 
 // =============================================================================
 // 14. DOM INITIALIZATION
@@ -1278,13 +1334,23 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (document.hidden) {
             stopRealtimeListener();
         } else {
-            if (!isListenerActive) startRealtimeListener();
+            // OPT: only restart the listener if we're on page 1 AND cache is stale.
+            // If the cache is still valid, there's nothing new to listen for yet.
+            if (!isListenerActive && currentPage === 1) {
+                if (!isCacheValid(memoryCache.timestamp)) {
+                    clearCache();
+                    loadNotes();
+                } else {
+                    startRealtimeListener();
+                }
+            }
         }
     });
 
     window.addEventListener('beforeunload', function() {
         stopRealtimeListener();
         saveCacheToStorage();
+        flushPendingViews(); // OPT: flush any queued views before leaving
     });
 });
 

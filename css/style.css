@@ -276,7 +276,7 @@ body.modal-open {
 
 .spinner-container {
     position: fixed;
-    top: 50%;
+    top: 70%;
     left: 50%; /* Changed from 55% to 50% for proper centering */
     transform: translate(-50%, -50%);
     z-index: 100;
@@ -408,8 +408,7 @@ body.modal-open {
 
 /* Note Content Styles */
 .note-message {
-    flex: 1;
-    margin-bottom: 16px;
+    margin-bottom: 0;
     word-wrap: break-word;
     overflow: hidden;
     padding-right: 4px;
@@ -426,7 +425,7 @@ body.modal-open {
     text-align: right;
     font-style: italic;
     color: inherit;
-    opacity: 0.7;
+    opacity: 0.75;
     margin-bottom: 8px;
 }
 
@@ -1168,16 +1167,24 @@ body.modal-open {
     }
     
     .notes-container {
-        grid-template-columns: repeat(auto-fill, minmax(237px, 1fr));
-        gap: 17.6px;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
         margin-top: 52.8px;
+        padding: 0 2px;
     }
-    
+
     .note-card {
         height: 237.6px;
         padding: 15.4px;
+        border-radius: 10px;
+        transition: box-shadow 0.2s ease;
     }
-    
+
+    .note-card:hover {
+        transform: none;
+        box-shadow: var(--shadow);
+    }
+
     .mobile-header {
         padding: 13.2px 17.6px;
     }
@@ -1416,39 +1423,54 @@ body.modal-open {
     }
     
     .note-message {
-        margin-bottom: 17.6px;
-        padding-right: 4.4px;
-        -webkit-line-clamp: 7; /* Adjusted for mobile */
-        line-clamp: 7;
+        -webkit-line-clamp: 6;
+        line-clamp: 6;
+        font-size: 0.95rem;
+        line-height: 1.5;
     }
-    
+
     .note-author {
         margin-bottom: 8.8px;
+        font-size: 0.85rem;
     }
-    
+
     .note-bottom {
-        padding-top: 8.8px;
-        gap: 8.8px;
+        padding-top: 6px;
+        gap: 8px;
     }
-    
-    .char-counter {
-        margin-top: 4.4px;
+
+    .view-counter {
+        font-size: 0.8rem;
     }
-    
+
     .reaction-btn {
         gap: 4.4px;
-        padding: 4.4px 8.8px;
+        padding: 6px 10px;
         border-radius: 16.5px;
-        font-size: 0.99rem;
+        font-size: 0.95rem;
         min-width: 44px;
+        min-height: 36px;
     }
-    
+
     .reaction-btn i {
-        font-size: 1.1rem;
+        font-size: 1rem;
     }
-    
+
     .reaction-count {
-        font-size: 0.935rem;
+        font-size: 0.9rem;
+    }
+
+    .see-more-btn {
+        font-size: 0.78rem;
+        font-weight: 500;
+        opacity: 0.75;
+        padding: 0;
+        min-height: unset;
+        display: none;
+    }
+
+    .note-card.is-overflowing .see-more-btn {
+        display: block;
     }
     
     .recaptcha-disclaimer {
@@ -1456,8 +1478,6 @@ body.modal-open {
         padding-top: 0.44rem;
         margin-bottom: -4.4px;
     }
-
-    /* Mobile pagination */
     .pagination-container {
         margin: 16px 8px;
         padding: 0;
@@ -1473,12 +1493,11 @@ body.modal-open {
         min-height: unset;
     }
 
-    /* Prev / Next: icon only on mobile to save space */
     .pagination-btn:first-child,
     .pagination-btn:last-child {
         flex-shrink: 0;
         padding: 8px 10px;
-        font-size: 0;   /* hide text */
+        font-size: 0;  
         min-width: 36px;
         height: 36px;
         border-radius: 8px;
@@ -1486,7 +1505,7 @@ body.modal-open {
 
     .pagination-btn:first-child i,
     .pagination-btn:last-child i {
-        font-size: 0.85rem; /* show only icon */
+        font-size: 0.85rem;
     }
 
     .page-numbers {
@@ -1524,16 +1543,12 @@ body.modal-open {
         grid-template-columns: 1fr;
     }
     
-    .notes-container {
-        grid-template-columns: 1fr;
-    }
-    
     .modal-content {
         width: 95%;
         padding: 17.6px 13.2px;
     }
     
-    /* Very small screen pagination — tighter */
+
     .pagination {
         gap: 4px;
     }
@@ -1553,6 +1568,11 @@ body.modal-open {
 }
 
 @media (max-width: 400px) {
+    .notes-container {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
     .color-options {
         justify-content: flex-start;
     }
@@ -1677,56 +1697,43 @@ body.modal-open {
     from { opacity: 0; transform: translateY(-8px); }
     to { opacity: 1; transform: translateY(0); }
 }
-/* ── Resize Handle ─────────────────────────────────────────────────────────── */
-/* Only visible when the note text is overflowing (.is-overflowing class) */
-.note-resize-handle {
-    display: none; /* hidden by default */
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 18px;
-    cursor: ns-resize;
-    align-items: center;
-    justify-content: center;
-    border-radius: 0 0 8px 8px;
-    background: linear-gradient(to top, rgba(0,0,0,0.08), transparent);
-    transition: background 0.2s ease;
-    z-index: 5;
-    user-select: none;
-    -webkit-user-select: none;
+/* ── See More Button ────────────────────────────────────────────────────────── */
+.note-content {
+    flex: 1;
+    overflow: hidden;
+    margin-bottom: 8px;
 }
 
-.note-resize-handle::after {
-    content: '';
+.see-more-btn {
+    display: none;
+    background: none;
+    border: none;
+    color: inherit;
+    opacity: 0.75;
+    font-size: inherit;
+    font-family: inherit;
+    font-weight: 400;
+    cursor: pointer;
+    padding: 0;
+    margin-top: 2px;
+    text-decoration: none;
+    transition: opacity 0.2s ease;
+    line-height: 1.5;
+}
+
+.see-more-btn:hover {
+    opacity: 1;
+    text-decoration: none;
+}
+
+/* Show button only when text overflows */
+.note-card.is-overflowing .see-more-btn {
     display: block;
-    width: 28px;
-    height: 3px;
-    border-radius: 2px;
-    background: rgba(0,0,0,0.25);
-    box-shadow: 0 -4px 0 rgba(0,0,0,0.15);
 }
 
-[data-theme="dark"] .note-resize-handle {
-    background: linear-gradient(to top, rgba(255,255,255,0.08), transparent);
-}
-[data-theme="dark"] .note-resize-handle::after {
-    background: rgba(255,255,255,0.3);
-    box-shadow: 0 -4px 0 rgba(255,255,255,0.15);
-}
-
-.note-resize-handle:hover {
-    background: linear-gradient(to top, rgba(0,0,0,0.18), transparent);
-}
-
-/* Show handle only when text overflows */
-.note-card.is-overflowing .note-resize-handle {
-    display: flex;
-}
-
-/* When expanded, allow full text to show */
+/* Expanded state — card grows to fit full message */
 .note-card.is-expanded {
-    /* No height here — JS controls it via inline style during expand/collapse */
+    height: auto;
     min-height: 216px;
 }
 
@@ -1737,7 +1744,6 @@ body.modal-open {
     display: block;
 }
 
-/* While actively being dragged, ensure height is never auto */
-.note-card.is-dragging {
-    height: auto;
+.note-card.is-expanded .note-content {
+    overflow: visible;
 }
