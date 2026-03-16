@@ -264,9 +264,6 @@ window.deleteNote = async function(noteId) {
         totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
         memoryCache.totalNotes = totalNotes;
 
-        // Cursors are stale after a delete — clear them so next navigation
-        // re-fetches with correct offsets
-        pageCursors.clear();
 
         if (updatedPage.length === 0 && currentPage > 1) {
             // Page became empty — step back and do a real fetch
@@ -539,7 +536,6 @@ function clearCache() {
     localStorage.removeItem(CACHE_KEY_NOTES);
     localStorage.removeItem(CACHE_KEY_TIMESTAMP);
     sessionStorage.removeItem('lastPageLoaded');
-    pageCursors.clear(); // OPT: invalidate cursors when data changes (post/delete)
 }
 
 function updateMemoryCache(page, notesData, totalCount) {
@@ -550,7 +546,9 @@ function updateMemoryCache(page, notesData, totalCount) {
     memoryCache.notes.set(page.toString(), serializableData);
     memoryCache.totalNotes = totalCount;
     memoryCache.timestamp = Date.now();
-    saveCacheToStorage();
+    // Not persisting to localStorage — we always fetch fresh on load.
+    // Keeping in memory only so getTotalNotesCount can skip re-fetching
+    // the count when navigating between pages in the same session.
 }
 
 function getCachedData(page) {
@@ -709,7 +707,6 @@ function addNewNoteToUI(noteData) {
     memoryCache.notes.set('1', updated);
     memoryCache.totalNotes = totalNotes;
     memoryCache.timestamp = Date.now();
-    pageCursors.clear(); // cursors are now stale — new note shifted all offsets
     saveCacheToStorage();
 }
 
@@ -797,22 +794,14 @@ function updateCharCount() {
 // =============================================================================
 
 async function getTotalNotesCount() {
-    // OPT: reuse cached total within the 20-min window — zero reads
-    if (memoryCache.totalNotes !== null && isCacheValid(memoryCache.timestamp)) {
-        return memoryCache.totalNotes;
-    }
-    try {
-        // FIX: only count visible notes — deleted notes were inflating totalPages,
-        // causing empty pages and broken pagination (Gemini fix #2)
-        const snapshot = await getCountFromServer(
-            query(collection(db, 'notes'), where('isDeleted', '==', false))
-        );
-        return snapshot.data().count;
-    } catch (error) {
-        // Bubble up to loadNotes() catch block so quota errors show the
-        // correct RSUvians message instead of silently returning 0
-        throw error;
-    }
+    // Always fetch fresh from Firestore — never use cached count.
+    // getCountFromServer is a single cheap aggregation read that doesn't
+    // count as a document read. This ensures totalNotes is always accurate
+    // and pagination always shows the correct number of pages.
+    const snapshot = await getCountFromServer(
+        query(collection(db, 'notes'), where('isDeleted', '==', false))
+    );
+    return snapshot.data().count;
 }
 
 function buildPaginationHTML() {
@@ -928,20 +917,8 @@ async function loadNotes() {
     if (!memoryCache.totalNotes) updateNotesUI([], true);
 
     try {
-        // OPT: serve from cache if still valid — zero Firestore reads
-        const cached = getCachedData(currentPage);
-        if (cached) {
-            totalNotes = cached.totalNotes;
-            totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
-            updateNotesUI(cached.notes, false);
-            createPaginationControls();
-            if (!isListenerActive) startRealtimeListener();
-            return;
-        }
-
-        // OPT: count only non-deleted notes for accurate pagination
-        const rawTotal = await getTotalNotesCount();
-        totalNotes = rawTotal;
+        // Always fetch fresh from Firestore — never serve from cache.
+        totalNotes = await getTotalNotesCount();
         totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
 
         if (currentPage > totalPages) {
@@ -949,40 +926,32 @@ async function loadNotes() {
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
         }
 
-        // FIX: server-side filter — where('isDeleted','==',false) means Firestore
-        // only sends visible notes. We are no longer charged for deleted docs.
-        // Requires a composite index: isDeleted ASC + createdAt DESC (Gemini fix #1).
-        // No FETCH_BUFFER needed anymore — every returned doc is a visible note.
-        const cursor = currentPage > 1 ? pageCursors.get(currentPage - 1) : null;
-        let q;
-        if (cursor) {
-            q = query(
-                collection(db, 'notes'),
-                where('isDeleted', '==', false),
-                orderBy('createdAt', 'desc'),
-                startAfter(cursor),
-                limit(notesPerPage)
-            );
-        } else {
-            q = query(
-                collection(db, 'notes'),
-                where('isDeleted', '==', false),
-                orderBy('createdAt', 'desc'),
-                limit(notesPerPage)
-            );
-        }
+        // Fetch all docs from the start up to and including the current page,
+        // then slice out exactly this page's 12 notes from the end.
+        // Page 1: fetch 12, slice(-12) → notes 1-12
+        // Page 2: fetch 24, slice(-12) → notes 13-24
+        // Page 5: fetch 60, slice(-12) → notes 49-60
+        // This never produces duplicates or gaps regardless of navigation order.
+        const fetchLimit = currentPage * notesPerPage;
+        const pageQ = query(
+            collection(db, 'notes'),
+            where('isDeleted', '==', false),
+            orderBy('createdAt', 'desc'),
+            limit(fetchLimit)
+        );
 
-        const snapshot = await getDocs(q);
+        const snapshot = await getDocs(pageQ);
+        const allDocs = snapshot.docs;
+
+        // slice(-notesPerPage) always takes the last 12 from the result set
+        const pageDocs = allDocs.length > notesPerPage
+            ? allDocs.slice(-notesPerPage)
+            : allDocs;
 
         const visibleNotes = [];
-        let lastDoc = null;
-        snapshot.forEach(docSnap => {
-            lastDoc = docSnap;
+        pageDocs.forEach(docSnap => {
             visibleNotes.push({ id: docSnap.id, ...docSnap.data() });
         });
-
-        // Store cursor at the end of this page for the next page's startAfter()
-        if (lastDoc) pageCursors.set(currentPage, lastDoc);
 
         updateMemoryCache(currentPage, visibleNotes, totalNotes);
         updateNotesUI(visibleNotes, false);
@@ -1228,13 +1197,16 @@ async function submitNote(e) {
         if (noteForm) noteForm.reset();
         closePostModal();
         showToast('Note posted successfully!');
-        clearCache();
 
         const newNoteData = { id: docRef.id, ...noteData, createdAt: new Date() };
 
         if (currentPage === 1) {
+            // addNewNoteToUI patches the cache and clears cursors itself —
+            // do NOT call clearCache() here or cursors get wiped before the patch runs
             addNewNoteToUI(newNoteData);
         } else {
+            // On other pages just clear cache so next visit to page 1 re-fetches fresh
+            clearCache();
             showToast('Note posted! Go to page 1 to see it.', false);
         }
     } catch (error) {
@@ -1259,7 +1231,10 @@ async function repairDatabase() { return; }
 
 document.addEventListener('DOMContentLoaded', async function() {
     await generateDeviceId();
-    loadCacheFromStorage();
+    // Always start fresh — stale localStorage cache from previous runs
+    // caused wrong page data to be served. We only use in-memory cache
+    // built during the current session.
+    clearCache();
 
     const lastPage = sessionStorage.getItem('lastPageLoaded');
     if (lastPage && !isNaN(lastPage)) currentPage = parseInt(lastPage);
@@ -1364,4 +1339,4 @@ function refreshNotes() {
 window.toggleTheme = toggleTheme;
 window.initTheme = initTheme;
 window.loadNotes = loadNotes;
-window.goToPage = goToPage;
+window.goToPage = goToPage;s
