@@ -426,7 +426,10 @@ body.modal-open {
     font-style: italic;
     color: inherit;
     opacity: 0.75;
-    margin-bottom: 8px;
+    margin-bottom: 2px;
+    margin-top: 0;
+    font-size: 1rem;
+    line-height: 1.3;
 }
 
 .note-bottom {
@@ -1430,8 +1433,10 @@ body.modal-open {
     }
 
     .note-author {
-        margin-bottom: 8.8px;
-        font-size: 0.85rem;
+        margin-bottom: 2px;
+        margin-top: 0;
+        font-size: 1rem;
+        line-height: 1.3;
     }
 
     .note-bottom {

@@ -1339,4 +1339,4 @@ function refreshNotes() {
 window.toggleTheme = toggleTheme;
 window.initTheme = initTheme;
 window.loadNotes = loadNotes;
-window.goToPage = goToPage;s
+window.goToPage = goToPage;
