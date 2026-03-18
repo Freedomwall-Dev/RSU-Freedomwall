@@ -360,7 +360,7 @@ body.modal-open {
     }
     
     .loading-spinner p {
-        font-size: 1rem; /* Slightly larger text on mobile */
+        font-size: 0.9rem; /* Slightly larger text on mobile */
         padding: 0 20px; /* More horizontal padding */
         line-height: 1.4; /* Better line height for readability */
     }
@@ -428,7 +428,7 @@ body.modal-open {
     opacity: 0.75;
     margin-bottom: 2px;
     margin-top: 0;
-    font-size: 1rem;
+    font-size: 0.9rem;
     line-height: 1.3;
 }
 
@@ -532,7 +532,7 @@ body.modal-open {
 }
 
 .reaction-btn i {
-    font-size: 1rem;
+    font-size: 0.9rem;
     transition: all 0.2s ease;
 }
 
@@ -665,7 +665,7 @@ body.modal-open {
     border: none;
     border-radius: 5px;
     cursor: pointer;
-    font-size: 1rem;
+    font-size: 0.9rem;
     transition: background-color 0.2s, transform 0.2s;
     text-align: center;
     margin: 4px 0;
@@ -846,7 +846,7 @@ body.modal-open {
     padding-top: 0.4rem;
     border-top: 1px solid #eee;
     color: #666;
-    font-size: 1rem;
+    font-size: 0.9rem;
     line-height: 1.3;
     margin-bottom: -4px;
 }
@@ -1435,7 +1435,7 @@ body.modal-open {
     .note-author {
         margin-bottom: 2px;
         margin-top: 0;
-        font-size: 1rem;
+        font-size: 0.9rem;
         line-height: 1.3;
     }
 
@@ -1458,7 +1458,7 @@ body.modal-open {
     }
 
     .reaction-btn i {
-        font-size: 1rem;
+        font-size: 0.9rem;
     }
 
     .reaction-count {
