@@ -270,6 +270,8 @@ window.deleteNote = async function(noteId) {
             currentPage--;
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
             clearCache();
+            // Re-set after clearCache since we want to preserve this page
+            sessionStorage.setItem('lastPageLoaded', currentPage.toString());
             stopRealtimeListener();
             await loadNotes();
         } else {
@@ -536,7 +538,9 @@ function clearCache() {
     pageCursors.clear();
     localStorage.removeItem(CACHE_KEY_NOTES);
     localStorage.removeItem(CACHE_KEY_TIMESTAMP);
-    sessionStorage.removeItem('lastPageLoaded');
+    // NOTE: intentionally NOT clearing sessionStorage lastPageLoaded —
+    // clearing it caused users to reset to page 1 after admin deletions
+    // or cache invalidation. Page is managed by goToPage() and DOMContentLoaded.
 }
 
 function updateMemoryCache(page, notesData, totalCount) {
