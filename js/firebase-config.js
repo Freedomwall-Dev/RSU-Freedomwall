@@ -1,5 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
 import { initializeFirestore } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app-check.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDOI2I4oY9zvbQ7T56gRI8_xpqQEQBqMSk",
@@ -14,6 +15,14 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// 🟢 CHANGED: Removed persistence setting. 
-// This prevents the database from getting "locked" by multiple tabs.
+// Initialize App Check with reCAPTCHA v3
+// Ensures only your actual website can access Firestore —
+// blocks bots and direct API abuse using your config.
+initializeAppCheck(app, {
+  provider: new ReCaptchaV3Provider('6Lcaq6IrAAAAAJ9JR4z19HGCQVsUbZvStdoLeipj'),
+  isTokenAutoRefreshEnabled: true
+});
+
+// Removed persistence setting — prevents DB from getting
+// "locked" by multiple tabs.
 export const db = initializeFirestore(app, {});

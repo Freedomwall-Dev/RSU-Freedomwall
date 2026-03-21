@@ -533,6 +533,7 @@ function clearCache() {
     memoryCache.notes.clear();
     memoryCache.totalNotes = null;
     memoryCache.timestamp = null;
+    pageCursors.clear();
     localStorage.removeItem(CACHE_KEY_NOTES);
     localStorage.removeItem(CACHE_KEY_TIMESTAMP);
     sessionStorage.removeItem('lastPageLoaded');
@@ -917,8 +918,25 @@ async function loadNotes() {
     if (!memoryCache.totalNotes) updateNotesUI([], true);
 
     try {
-        // Always fetch fresh from Firestore — never serve from cache.
-        totalNotes = await getTotalNotesCount();
+        // OPT: serve from cache if valid — skip Firestore entirely
+        const cached = getCachedData(currentPage);
+        if (cached) {
+            totalNotes = cached.totalNotes;
+            totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
+            updateNotesUI(cached.notes, false);
+            createPaginationControls();
+            if (!isListenerActive) startRealtimeListener();
+            isLoading = false;
+            return;
+        }
+
+        // OPT: only fetch total count if not already cached in memory
+        if (!memoryCache.totalNotes) {
+            totalNotes = await getTotalNotesCount();
+            memoryCache.totalNotes = totalNotes;
+        } else {
+            totalNotes = memoryCache.totalNotes;
+        }
         totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
 
         if (currentPage > totalPages) {
@@ -926,32 +944,37 @@ async function loadNotes() {
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
         }
 
-        // Fetch all docs from the start up to and including the current page,
-        // then slice out exactly this page's 12 notes from the end.
-        // Page 1: fetch 12, slice(-12) → notes 1-12
-        // Page 2: fetch 24, slice(-12) → notes 13-24
-        // Page 5: fetch 60, slice(-12) → notes 49-60
-        // This never produces duplicates or gaps regardless of navigation order.
-        const fetchLimit = currentPage * notesPerPage;
-        const pageQ = query(
-            collection(db, 'notes'),
-            where('isDeleted', '==', false),
-            orderBy('createdAt', 'desc'),
-            limit(fetchLimit)
-        );
+        // OPT: use startAfter cursor — fetch exactly 12 docs per page
+        // instead of fetching all docs up to currentPage and slicing.
+        // Page 1=12 reads, Page 5=12 reads (not 60). Major reduction.
+        let pageQ;
+        const cursorDoc = pageCursors.get(currentPage - 1);
+        if (currentPage > 1 && cursorDoc) {
+            pageQ = query(
+                collection(db, 'notes'),
+                where('isDeleted', '==', false),
+                orderBy('createdAt', 'desc'),
+                startAfter(cursorDoc),
+                limit(notesPerPage)
+            );
+        } else {
+            pageQ = query(
+                collection(db, 'notes'),
+                where('isDeleted', '==', false),
+                orderBy('createdAt', 'desc'),
+                limit(notesPerPage)
+            );
+        }
 
         const snapshot = await getDocs(pageQ);
         const allDocs = snapshot.docs;
 
-        // slice(-notesPerPage) always takes the last 12 from the result set
-        const pageDocs = allDocs.length > notesPerPage
-            ? allDocs.slice(-notesPerPage)
-            : allDocs;
+        // Store last doc as cursor for next page navigation
+        if (allDocs.length > 0) {
+            pageCursors.set(currentPage, allDocs[allDocs.length - 1]);
+        }
 
-        const visibleNotes = [];
-        pageDocs.forEach(docSnap => {
-            visibleNotes.push({ id: docSnap.id, ...docSnap.data() });
-        });
+        const visibleNotes = allDocs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
 
         updateMemoryCache(currentPage, visibleNotes, totalNotes);
         updateNotesUI(visibleNotes, false);
@@ -961,7 +984,6 @@ async function loadNotes() {
 
     } catch (error) {
         console.error('Error loading notes:', error);
-        // Surface missing Firestore index URL directly in the console
         if (error.message && error.message.includes('https://')) {
             const indexUrl = error.message.match(/https:\/\/\S+/)?.[0];
             if (indexUrl) {
@@ -984,6 +1006,8 @@ async function loadNotes() {
         isLoading = false;
     }
 }
+
+
 
 // =============================================================================
 // 11. NOTE RENDERING
