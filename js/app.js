@@ -268,9 +268,8 @@ window.deleteNote = async function(noteId) {
         if (updatedPage.length === 0 && currentPage > 1) {
             // Page became empty — step back and do a real fetch
             currentPage--;
-            sessionStorage.setItem('lastPageLoaded', currentPage.toString());
             clearCache();
-            // Re-set after clearCache since we want to preserve this page
+            // Re-set after clearCache to preserve the correct page
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
             stopRealtimeListener();
             await loadNotes();
@@ -538,9 +537,7 @@ function clearCache() {
     pageCursors.clear();
     localStorage.removeItem(CACHE_KEY_NOTES);
     localStorage.removeItem(CACHE_KEY_TIMESTAMP);
-    // NOTE: intentionally NOT clearing sessionStorage lastPageLoaded —
-    // clearing it caused users to reset to page 1 after admin deletions
-    // or cache invalidation. Page is managed by goToPage() and DOMContentLoaded.
+    // NOT clearing sessionStorage lastPageLoaded — would reset user to page 1 after admin deletions.
 }
 
 function updateMemoryCache(page, notesData, totalCount) {
@@ -948,37 +945,29 @@ async function loadNotes() {
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
         }
 
-        // OPT: use startAfter cursor — fetch exactly 12 docs per page
-        // instead of fetching all docs up to currentPage and slicing.
-        // Page 1=12 reads, Page 5=12 reads (not 60). Major reduction.
-        let pageQ;
-        const cursorDoc = pageCursors.get(currentPage - 1);
-        if (currentPage > 1 && cursorDoc) {
-            pageQ = query(
-                collection(db, 'notes'),
-                where('isDeleted', '==', false),
-                orderBy('createdAt', 'desc'),
-                startAfter(cursorDoc),
-                limit(notesPerPage)
-            );
-        } else {
-            pageQ = query(
-                collection(db, 'notes'),
-                where('isDeleted', '==', false),
-                orderBy('createdAt', 'desc'),
-                limit(notesPerPage)
-            );
-        }
+        // Fetch all docs up to and including current page, then slice last 12.
+        // Reliable for direct page jumps — cursor approach broke when pages
+        // were visited out of order (e.g. clicking page 5 directly).
+        const fetchLimit = currentPage * notesPerPage;
+        const pageQ = query(
+            collection(db, 'notes'),
+            where('isDeleted', '==', false),
+            orderBy('createdAt', 'desc'),
+            limit(fetchLimit)
+        );
 
         const snapshot = await getDocs(pageQ);
         const allDocs = snapshot.docs;
 
-        // Store last doc as cursor for next page navigation
         if (allDocs.length > 0) {
             pageCursors.set(currentPage, allDocs[allDocs.length - 1]);
         }
 
-        const visibleNotes = allDocs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+        const pageDocs = allDocs.length > notesPerPage
+            ? allDocs.slice(-notesPerPage)
+            : allDocs;
+
+        const visibleNotes = pageDocs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
 
         updateMemoryCache(currentPage, visibleNotes, totalNotes);
         updateNotesUI(visibleNotes, false);
