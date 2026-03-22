@@ -907,7 +907,7 @@ async function loadNotes() {
             <div class="error">
                 <i class="fas fa-exclamation-triangle"></i>
                 <p>${isQuotaExceeded
-                    ? "The Freedom Wall is resting! We've hit our daily visitor limit. Please come back tomorrow morning, RSUvians!"
+                    ? "The Freedom Wall is taking a short break due to high traffic. Please try again in a few hours, RSUvians!"
                     : "Error loading notes. Please check your connection."}</p>
                 ${!isQuotaExceeded ? '<button onclick="loadNotes()" class="retry-btn">Try Again</button>' : ''}
             </div>`;
