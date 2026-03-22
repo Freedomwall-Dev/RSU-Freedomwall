@@ -6,10 +6,6 @@ import {
     writeBatch
 } from "firebase/firestore";
 
-// =============================================================================
-// 1. CONFIGURATION & CONSTANTS
-// =============================================================================
-
 const RECAPTCHA_SITE_KEY = '6Lcaq6IrAAAAAJ9JR4z19HGCQVsUbZvStdoLeipj';
 
 const COOLDOWN_MINUTES = 0;
@@ -18,7 +14,7 @@ const HOURLY_LIMIT = 7;
 let userIP = null;
 const IP_CACHE_KEY = 'cachedIP';
 const IP_CACHE_EXPIRY_KEY = 'cachedIPExpiry';
-const IP_CACHE_TTL = 30 * 60 * 1000; // FIX: 30-min TTL — avoids stale IP from dynamic IPs/VPNs
+const IP_CACHE_TTL = 30 * 60 * 1000; 
 
 const DEVICE_ID_KEY = 'deviceId';
 let currentDeviceId = null;
@@ -30,14 +26,12 @@ let totalPages = 0;
 let isLoading = false;
 let lastVisible = null;
 
-const CACHE_DURATION = 20 * 60 * 1000; // OPT: extended from 5 → 20 mins
+const CACHE_DURATION = 20 * 60 * 1000; 
 const CACHE_KEY_NOTES = 'cachedNotes';
 const CACHE_KEY_TIMESTAMP = 'cacheTimestamp';
 
-// OPT: stores last Firestore doc snapshot per page for cursor-based pagination
-const pageCursors = new Map(); // key: pageNumber → lastVisible doc snapshot
+const pageCursors = new Map(); 
 
-// OPT: batched view increments — collected during render, flushed once
 const pendingViews = new Set();
 let viewFlushTimer = null;
 
@@ -51,12 +45,7 @@ let memoryCache = {
 let isListenerActive = false;
 let currentListener = null;
 
-// FIX: Repair gate — only runs once per session, not every page load
 const REPAIR_DONE_KEY = 'repairDoneSession';
-
-// =============================================================================
-// 2. DEVICE IDENTITY & SECURITY
-// =============================================================================
 
 async function generateDeviceId() {
     const storedDeviceId = localStorage.getItem(DEVICE_ID_KEY);
@@ -105,7 +94,6 @@ function generateCanvasFingerprint() {
     } catch (e) { return 'error'; }
 }
 
-// FIX: IP cache now has a 30-minute expiry to handle dynamic IPs / VPN switches
 async function getUserIP() {
     if (userIP) return userIP;
     const cachedIP = localStorage.getItem(IP_CACHE_KEY);
@@ -137,10 +125,6 @@ function encodeHTML(input) {
     return el.innerHTML;
 }
 
-// =============================================================================
-// 3. NOTE INTERACTIONS (Reactions, Views, Delete)
-// =============================================================================
-
 async function toggleReaction(noteId, noteElement) {
     if (!currentDeviceId) await generateDeviceId();
     try {
@@ -148,8 +132,8 @@ async function toggleReaction(noteId, noteElement) {
         const reactionBtn = noteElement.querySelector('.reaction-btn');
         reactionBtn.disabled = true;
 
-        // OPT: removed redundant getDoc — transaction already reads the doc.
-        // We derive hasReacted + count optimistically from the UI instead.
+        
+        
         const heartIcon = reactionBtn.querySelector('i');
         const hasReacted = heartIcon && heartIcon.classList.contains('fas');
         const countSpan = reactionBtn.querySelector('.reaction-count');
@@ -188,8 +172,8 @@ function updateReactionUI(noteElement, noteId, hasReacted, reactionCount) {
     reactionBtn.classList.toggle('reacted', hasReacted);
     countSpan.textContent = reactionCount || 0;
 
-    // OPT: patch in-memory cache so the updated count survives a re-render
-    // without needing a Firestore re-fetch
+    
+    
     const pageKey = currentPage.toString();
     const cachedPage = memoryCache.notes.get(pageKey);
     if (cachedPage) {
@@ -206,13 +190,11 @@ function updateReactionUI(noteElement, noteId, hasReacted, reactionCount) {
     }
 }
 
-// OPT: instead of one updateDoc per note (12 writes per page load),
-// collect all unseen note IDs and flush them in a single batch after 3s.
 function queueViewIncrement(noteId, viewedBy) {
     if (!currentDeviceId) return;
     if (viewedBy && viewedBy.includes(currentDeviceId)) return;
     pendingViews.add(noteId);
-    // Reset the debounce timer so we wait until all notes have been queued
+    
     clearTimeout(viewFlushTimer);
     viewFlushTimer = setTimeout(flushPendingViews, 3000);
 }
@@ -221,7 +203,7 @@ async function flushPendingViews() {
     if (!pendingViews.size || !currentDeviceId) return;
     const ids = [...pendingViews];
     pendingViews.clear();
-    // OPT: writeBatch sends all view increments in one round-trip
+    
     try {
         const batch = writeBatch(db);
         ids.forEach(noteId => {
@@ -236,14 +218,13 @@ async function flushPendingViews() {
     }
 }
 
-// FIX: After deleting, reload the page so the gap is filled with the next note
 window.deleteNote = async function(noteId) {
     if (!confirm('Delete this note? This cannot be undone.')) return;
     try {
         const noteRef = doc(db, 'notes', noteId);
         await updateDoc(noteRef, { isDeleted: true, deviceId: currentDeviceId });
 
-        // Animate out
+        
         const el = document.querySelector(`[data-note-id="${noteId}"]`);
         if (el) {
             el.style.transition = 'all 0.3s ease';
@@ -255,8 +236,8 @@ window.deleteNote = async function(noteId) {
 
         showToast('Note deleted successfully');
 
-        // OPT: patch the cache locally instead of clearing + full re-fetch.
-        // Remove the note from the cached page and update totals in place.
+        
+        
         const pageKey = currentPage.toString();
         const cachedPage = memoryCache.notes.get(pageKey) || [];
         const updatedPage = cachedPage.filter(n => n.id !== noteId);
@@ -264,17 +245,16 @@ window.deleteNote = async function(noteId) {
         totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
         memoryCache.totalNotes = totalNotes;
 
-
         if (updatedPage.length === 0 && currentPage > 1) {
-            // Page became empty — step back and do a real fetch
+            
             currentPage--;
             clearCache();
-            // Re-set after clearCache to preserve the correct page
+            
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
             stopRealtimeListener();
             await loadNotes();
         } else {
-            // Page still has notes — re-render from the patched cache, no fetch
+            
             memoryCache.notes.set(pageKey, updatedPage);
             memoryCache.timestamp = Date.now();
             saveCacheToStorage();
@@ -302,10 +282,6 @@ window.toggleMenu = function(noteId) {
         setTimeout(() => document.addEventListener('click', closeMenu), 0);
     }
 }
-
-// =============================================================================
-// 4. SECURITY CHECKS
-// =============================================================================
 
 async function executeRecaptcha(action = 'post_note') {
     return new Promise((resolve, reject) => {
@@ -376,7 +352,7 @@ async function canPostServerSide(deviceId) {
             const windowStart = data.windowStart?.toDate();
             const lastPost = data.lastPostTime?.toDate();
             const postCount = data.postCount || 0;
-            // FIX: Cooldown only enforced when COOLDOWN_MINUTES > 0
+            
             if (COOLDOWN_MINUTES > 0 && lastPost && (currentTime - lastPost) < (COOLDOWN_MINUTES * 60 * 1000)) {
                 const remainingSeconds = Math.ceil((COOLDOWN_MINUTES * 60 * 1000 - (currentTime - lastPost)) / 1000);
                 throw new Error(`Please wait ${remainingSeconds} seconds before posting again.`);
@@ -415,10 +391,6 @@ async function canPostServerSide(deviceId) {
         return true;
     }
 }
-
-// =============================================================================
-// 5. UI HELPERS
-// =============================================================================
 
 function linkify(text) {
     if (!text) return '';
@@ -490,10 +462,6 @@ function getContrastColor(hexColor) {
     return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5 ? '#000000' : '#ffffff';
 }
 
-// =============================================================================
-// 6. CACHE MANAGEMENT
-// =============================================================================
-
 function isCacheValid(timestamp) {
     if (!timestamp) return false;
     return (Date.now() - timestamp) < CACHE_DURATION;
@@ -537,7 +505,6 @@ function clearCache() {
     pageCursors.clear();
     localStorage.removeItem(CACHE_KEY_NOTES);
     localStorage.removeItem(CACHE_KEY_TIMESTAMP);
-    // NOT clearing sessionStorage lastPageLoaded — would reset user to page 1 after admin deletions.
 }
 
 function updateMemoryCache(page, notesData, totalCount) {
@@ -548,9 +515,6 @@ function updateMemoryCache(page, notesData, totalCount) {
     memoryCache.notes.set(page.toString(), serializableData);
     memoryCache.totalNotes = totalCount;
     memoryCache.timestamp = Date.now();
-    // Not persisting to localStorage — we always fetch fresh on load.
-    // Keeping in memory only so getTotalNotesCount can skip re-fetching
-    // the count when navigating between pages in the same session.
 }
 
 function getCachedData(page) {
@@ -565,21 +529,9 @@ function getCachedData(page) {
     return null;
 }
 
-// =============================================================================
-// 7. REAL-TIME LISTENER — ALL PAGES (FIXED)
-// =============================================================================
-
-/**
- * FIX: Real-time listener now covers ALL pages, not just page 1.
- * It listens to a large window of docs, slices to the current page,
- * and refreshes the UI whenever Firestore pushes any change.
- */
 function startRealtimeListener() {
-    // OPT: listener only runs on page 1 — no point listening for new posts
-    // on page 5 since they appear at the top (page 1) anyway.
     if (isListenerActive || !currentDeviceId || currentPage !== 1) return;
     try {
-        // FIX: same server-side filter as loadNotes — only listen to visible notes
         const q = query(
             collection(db, 'notes'),
             where('isDeleted', '==', false),
@@ -592,7 +544,6 @@ function startRealtimeListener() {
         currentListener = onSnapshot(q, (snapshot) => {
             if (isFirstSnapshot) { isFirstSnapshot = false; return; }
 
-            // Only reload on new additions — deletions are handled locally now
             const hasStructuralChange = snapshot.docChanges().some(change => {
                 return change.type === 'added';
             });
@@ -664,7 +615,6 @@ function updateNotesUI(notesData, showLoading = false) {
     }
 }
 
-// Optimistic insert of new note to top of page 1
 function addNewNoteToUI(noteData) {
     if (noteData.isDeleted === true) return;
     const notesContainer = document.getElementById('notesContainer');
@@ -682,7 +632,6 @@ function addNewNoteToUI(noteData) {
         noteElement.style.opacity = '1';
         noteElement.style.transform = 'translateY(0) scale(1)';
     }));
-    // Push overflow note off the bottom with fade
     const allNotes = notesContainer.querySelectorAll('.note-card');
     if (allNotes.length > notesPerPage) {
         const lastNote = allNotes[allNotes.length - 1];
@@ -695,9 +644,6 @@ function addNewNoteToUI(noteData) {
     totalPages = Math.ceil(totalNotes / notesPerPage);
     createPaginationControls();
 
-    // OPT: patch page 1 cache to include the new note so the next cache hit
-    // returns up-to-date data without a Firestore re-fetch.
-    // Also invalidate page cursors since the new note shifted all offsets.
     const page1Cache = memoryCache.notes.get('1') || [];
     const serialized = {
         ...noteData,
@@ -712,15 +658,6 @@ function addNewNoteToUI(noteData) {
     saveCacheToStorage();
 }
 
-// =============================================================================
-// 8. MODAL MANAGEMENT
-// =============================================================================
-
-/**
- * FIX: Terms/reCAPTCHA modal ONLY shows when user opens Post a Note.
- * Does NOT show on page load anymore.
- * After agreeing, post modal opens automatically — no extra click needed.
- */
 function openPostModal() {
     if (shouldShowTerms()) {
         const termsModal = document.getElementById('termsModal');
@@ -768,7 +705,6 @@ function agreeToTerms() {
         termsModal.style.display = 'none';
         document.body.classList.remove('modal-open');
     }
-    // FIX: Automatically open post modal right after agreeing
     const postModal = document.getElementById('postModal');
     if (postModal) {
         postModal.style.display = 'flex';
@@ -791,15 +727,7 @@ function updateCharCount() {
     charCount.style.color = currentLength > 200 ? '#ff6b6b' : '';
 }
 
-// =============================================================================
-// 9. PAGINATION
-// =============================================================================
-
 async function getTotalNotesCount() {
-    // Always fetch fresh from Firestore — never use cached count.
-    // getCountFromServer is a single cheap aggregation read that doesn't
-    // count as a document read. This ensures totalNotes is always accurate
-    // and pagination always shows the correct number of pages.
     const snapshot = await getCountFromServer(
         query(collection(db, 'notes'), where('isDeleted', '==', false))
     );
@@ -847,7 +775,6 @@ function createPaginationControls() {
 
     const { prevDisabled, nextDisabled, pageNumbersHTML, pageInfoText } = buildPaginationHTML();
 
-    // Update in-place if already exists — prevents layout jump / twitching
     const existing = document.getElementById('paginationContainer');
     if (existing) {
         const prevBtn = existing.querySelector('.pagination-btn:first-child');
@@ -901,15 +828,10 @@ async function goToPage(pageNumber) {
     if (pageNumber < 1 || pageNumber > totalPages || pageNumber === currentPage || isLoading) return;
     currentPage = pageNumber;
     sessionStorage.setItem('lastPageLoaded', pageNumber.toString());
-    // OPT: stop listener when leaving page 1 — new posts only appear on page 1
     if (currentPage !== 1) stopRealtimeListener();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     await loadNotes();
 }
-
-// =============================================================================
-// 10. LOAD NOTES (gap-fill on delete)
-// =============================================================================
 
 async function loadNotes() {
     if (isLoading) return;
@@ -919,7 +841,6 @@ async function loadNotes() {
     if (!memoryCache.totalNotes) updateNotesUI([], true);
 
     try {
-        // OPT: serve from cache if valid — skip Firestore entirely
         const cached = getCachedData(currentPage);
         if (cached) {
             totalNotes = cached.totalNotes;
@@ -931,7 +852,6 @@ async function loadNotes() {
             return;
         }
 
-        // OPT: only fetch total count if not already cached in memory
         if (!memoryCache.totalNotes) {
             totalNotes = await getTotalNotesCount();
             memoryCache.totalNotes = totalNotes;
@@ -945,9 +865,6 @@ async function loadNotes() {
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
         }
 
-        // Fetch all docs up to and including current page, then slice last 12.
-        // Reliable for direct page jumps — cursor approach broke when pages
-        // were visited out of order (e.g. clicking page 5 directly).
         const fetchLimit = currentPage * notesPerPage;
         const pageQ = query(
             collection(db, 'notes'),
@@ -999,12 +916,6 @@ async function loadNotes() {
         isLoading = false;
     }
 }
-
-
-
-// =============================================================================
-// 11. NOTE RENDERING
-// =============================================================================
 
 function createNoteElement(noteData) {
     const noteId = noteData.id;
@@ -1086,7 +997,6 @@ function createNoteElement(noteData) {
     bottomDiv.appendChild(viewDiv);
     bottomDiv.appendChild(reactionDiv);
 
-    // Wrap message + inline see-more in a content block
     const contentBlock = document.createElement('div');
     contentBlock.className = 'note-content';
     contentBlock.appendChild(messageDiv);
@@ -1095,14 +1005,12 @@ function createNoteElement(noteData) {
     noteElement.appendChild(authorDiv);
     noteElement.appendChild(bottomDiv);
 
-    // Check overflow and add inline See more after rendering
     setTimeout(() => checkNoteOverflow(noteElement, messageDiv, contentBlock), 100);
 
     return noteElement;
 }
 
 function checkNoteOverflow(noteElement, messageDiv, contentBlock) {
-    // Clone without clamping to measure natural height
     const clone = messageDiv.cloneNode(true);
     clone.style.cssText = [
         'position:absolute',
@@ -1129,7 +1037,6 @@ function checkNoteOverflow(noteElement, messageDiv, contentBlock) {
     if (naturalHeight > messageDiv.clientHeight + 2) {
         noteElement.classList.add('is-overflowing');
 
-        // Inline See more — appended inside the content block, after the message
         const seeMoreBtn = document.createElement('button');
         seeMoreBtn.className = 'see-more-btn';
         seeMoreBtn.textContent = 'See more';
@@ -1157,10 +1064,6 @@ function addNoteToContainer(docData) {
     const noteElement = createNoteElement(docData);
     document.getElementById('notesContainer').appendChild(noteElement);
 }
-
-// =============================================================================
-// 12. SUBMIT NOTE
-// =============================================================================
 
 async function submitNote(e) {
     e.preventDefault();
@@ -1218,11 +1121,8 @@ async function submitNote(e) {
         const newNoteData = { id: docRef.id, ...noteData, createdAt: new Date() };
 
         if (currentPage === 1) {
-            // addNewNoteToUI patches the cache and clears cursors itself —
-            // do NOT call clearCache() here or cursors get wiped before the patch runs
             addNewNoteToUI(newNoteData);
         } else {
-            // On other pages just clear cache so next visit to page 1 re-fetches fresh
             clearCache();
             showToast('Note posted! Go to page 1 to see it.', false);
         }
@@ -1234,23 +1134,10 @@ async function submitNote(e) {
     }
 }
 
-// =============================================================================
-// 13. DATABASE REPAIR — DISABLED
-// =============================================================================
-// All notes now have isDeleted defined. The server-side where('isDeleted','==',false)
-// filter in loadNotes() is the safety net. Re-enable only if you add a new field
-// that needs backfilling across old documents.
 async function repairDatabase() { return; }
-
-// =============================================================================
-// 14. DOM INITIALIZATION
-// =============================================================================
 
 document.addEventListener('DOMContentLoaded', async function() {
     await generateDeviceId();
-    // Always start fresh — stale localStorage cache from previous runs
-    // caused wrong page data to be served. We only use in-memory cache
-    // built during the current session.
     clearCache();
 
     const lastPage = sessionStorage.getItem('lastPageLoaded');
@@ -1326,8 +1213,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (document.hidden) {
             stopRealtimeListener();
         } else {
-            // OPT: only restart the listener if we're on page 1 AND cache is stale.
-            // If the cache is still valid, there's nothing new to listen for yet.
+            
             if (!isListenerActive && currentPage === 1) {
                 if (!isCacheValid(memoryCache.timestamp)) {
                     clearCache();
@@ -1342,7 +1228,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     window.addEventListener('beforeunload', function() {
         stopRealtimeListener();
         saveCacheToStorage();
-        flushPendingViews(); // OPT: flush any queued views before leaving
+        flushPendingViews(); 
     });
 });
 

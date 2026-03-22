@@ -12,17 +12,15 @@ const firebaseConfig = {
   measurementId: "G-4MDSWNDVEY"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize App Check with reCAPTCHA v3
-// Ensures only your actual website can access Firestore —
-// blocks bots and direct API abuse using your config.
-initializeAppCheck(app, {
-  provider: new ReCaptchaV3Provider('6Lcaq6IrAAAAAJ9JR4z19HGCQVsUbZvStdoLeipj'),
-  isTokenAutoRefreshEnabled: true
-});
+const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
-// Removed persistence setting — prevents DB from getting
-// "locked" by multiple tabs.
+if (!isLocalhost) {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaV3Provider('6Lcaq6IrAAAAAJ9JR4z19HGCQVsUbZvStdoLeipj'),
+    isTokenAutoRefreshEnabled: true
+  });
+}
+
 export const db = initializeFirestore(app, {});
