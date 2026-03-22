@@ -79,7 +79,7 @@
                     <li><i class="fas fa-check-circle"></i> No inappropriate content</li>
                     <li style="display: block;"><i class="fas fa-circle-exclamation" style="margin-right: 8px; color: var(--primary-color);"></i>By posting, you agree that your notes may be shared to our official <a href="https://www.facebook.com/profile.php?id=61579103934265" target="_blank" style="text-decoration: none; color: var(--primary-color); font-weight: 600;">Facebook page</a>.</li>
                 </ul>
-                <p>Violations may result in the removal of content and the suspension or permanent restriction of access to this platform. By using this platform, you agree to these terms.</p>
+                <p>Violations may result in the removal of content and the suspension or permanent restriction of access to this platform. By using this platform, you agree to these terms and take full responsibility for your posts.</p>
                 <div class="terms-checkbox">
                     <input type="checkbox" id="dontShowAgain">
                     <label for="dontShowAgain">Don't show this again today</label>
@@ -117,13 +117,13 @@
                 <div class="form-group">
                     <label>Note Color</label>
                     <div class="color-options">
-                        <button type="button" class="color-option" data-color="#FFEB3B"></button> <!-- Yellow -->
-                        <button type="button" class="color-option" data-color="#80D8FF"></button> <!-- Sky Blue -->
-                        <button type="button" class="color-option" data-color="#A5D6A7"></button> <!-- Mint Green -->
-                        <button type="button" class="color-option" data-color="#FFD180"></button> <!-- Peach -->
-                        <button type="button" class="color-option" data-color="#FF80AB"></button> <!-- Pink -->
-                        <button type="button" class="color-option" data-color="#CF93FF"></button> <!-- Lavender -->
-                        <button type="button" class="color-option" data-color="#FF9E80"></button> <!-- Coral -->
+                        <button type="button" class="color-option" data-color="#FFEB3B"></button>
+                        <button type="button" class="color-option" data-color="#80D8FF"></button>
+                        <button type="button" class="color-option" data-color="#A5D6A7"></button>
+                        <button type="button" class="color-option" data-color="#FFD180"></button>
+                        <button type="button" class="color-option" data-color="#FF80AB"></button>
+                        <button type="button" class="color-option" data-color="#CF93FF"></button>
+                        <button type="button" class="color-option" data-color="#FF9E80"></button>
                     </div>
                     <input type="hidden" id="selectedColor" value="#FFEB3B">
                 </div>
@@ -179,7 +179,6 @@
         <!-- Main Content -->
         <main class="main-content">
             <div class="notes-container" id="notesContainer">
-                <!-- Notes will be loaded here -->
                 <div class="loading">
                     <div class="spinner-container">
                         <div class="loading-spinner">
@@ -189,8 +188,6 @@
                     </div>
                 </div>
             </div>
-            
-            <!-- Pagination will be inserted here by JavaScript -->
         </main>
     </div>
 
