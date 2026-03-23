@@ -132,8 +132,6 @@ async function toggleReaction(noteId, noteElement) {
         const reactionBtn = noteElement.querySelector('.reaction-btn');
         reactionBtn.disabled = true;
 
-        
-        
         const heartIcon = reactionBtn.querySelector('i');
         const hasReacted = heartIcon && heartIcon.classList.contains('fas');
         const countSpan = reactionBtn.querySelector('.reaction-count');
@@ -172,8 +170,6 @@ function updateReactionUI(noteElement, noteId, hasReacted, reactionCount) {
     reactionBtn.classList.toggle('reacted', hasReacted);
     countSpan.textContent = reactionCount || 0;
 
-    
-    
     const pageKey = currentPage.toString();
     const cachedPage = memoryCache.notes.get(pageKey);
     if (cachedPage) {
@@ -222,9 +218,10 @@ window.deleteNote = async function(noteId) {
     if (!confirm('Delete this note? This cannot be undone.')) return;
     try {
         const noteRef = doc(db, 'notes', noteId);
-        await updateDoc(noteRef, { isDeleted: true, deviceId: currentDeviceId });
+        // Only send isDeleted — sending deviceId would break the Firebase rule
+        await updateDoc(noteRef, { isDeleted: true });
 
-        
+        // Animate note out
         const el = document.querySelector(`[data-note-id="${noteId}"]`);
         if (el) {
             el.style.transition = 'all 0.3s ease';
@@ -236,31 +233,24 @@ window.deleteNote = async function(noteId) {
 
         showToast('Note deleted successfully');
 
-        
-        
-        const pageKey = currentPage.toString();
-        const cachedPage = memoryCache.notes.get(pageKey) || [];
-        const updatedPage = cachedPage.filter(n => n.id !== noteId);
+        // Clear all cache so Firestore is re-queried fresh (fills the gap from next page)
+        clearCache();
+        stopRealtimeListener();
+
+        // Recalculate totals
         totalNotes = Math.max(0, totalNotes - 1);
         totalPages = Math.max(1, Math.ceil(totalNotes / notesPerPage));
         memoryCache.totalNotes = totalNotes;
 
-        if (updatedPage.length === 0 && currentPage > 1) {
-            
-            currentPage--;
-            clearCache();
-            
+        // If current page no longer exists, go back one
+        if (currentPage > totalPages) {
+            currentPage = totalPages;
             sessionStorage.setItem('lastPageLoaded', currentPage.toString());
-            stopRealtimeListener();
-            await loadNotes();
-        } else {
-            
-            memoryCache.notes.set(pageKey, updatedPage);
-            memoryCache.timestamp = Date.now();
-            saveCacheToStorage();
-            updateNotesUI(updatedPage, false);
-            createPaginationControls();
         }
+
+        // Reload from Firestore — fills the gap with the next page's note
+        await loadNotes();
+
     } catch (error) {
         console.error('Delete failed:', error);
         showToast('You cannot delete this note.', true);
@@ -665,7 +655,7 @@ function openPostModal() {
             termsModal.style.display = 'flex';
             document.body.classList.add('modal-open');
         }
-        return; // agreeToTerms() will open the post modal after
+        return;
     }
     const postModal = document.getElementById('postModal');
     if (postModal) {
@@ -921,7 +911,7 @@ function createNoteElement(noteData) {
     const noteId = noteData.id;
     const note = noteData;
     const isAuthor = note.deviceId === currentDeviceId;
-    setTimeout(() => queueViewIncrement(noteId, note.viewedBy), 2000); // OPT: batched
+    setTimeout(() => queueViewIncrement(noteId, note.viewedBy), 2000);
 
     const noteElement = document.createElement('div');
     noteElement.className = 'note-card';
@@ -1213,7 +1203,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (document.hidden) {
             stopRealtimeListener();
         } else {
-            
             if (!isListenerActive && currentPage === 1) {
                 if (!isCacheValid(memoryCache.timestamp)) {
                     clearCache();
@@ -1228,7 +1217,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     window.addEventListener('beforeunload', function() {
         stopRealtimeListener();
         saveCacheToStorage();
-        flushPendingViews(); 
+        flushPendingViews();
     });
 });
 
