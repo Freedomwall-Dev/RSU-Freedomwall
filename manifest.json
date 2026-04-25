@@ -3,7 +3,7 @@
   "short_name": "RSU Freedomwall",
   "start_url": "/index.html",
   "display": "standalone",
-  "background_color": "#f8f9fa",
+  "background_color": "#1e1e1e",
   "theme_color": "#1e1e1e",
   "icons": [
     {
@@ -15,7 +15,8 @@
     {
       "src": "/images/android-chrome-512x512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/images/apple-touch-icon.png",
