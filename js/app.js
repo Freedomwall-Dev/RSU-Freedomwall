@@ -1126,9 +1126,113 @@ async function submitNote(e) {
 
 async function repairDatabase() { return; }
 
+// --- Bible Verse of the Day ---
+
+// A curated list of well-known verse references, one per day of the year (cycling).
+// The actual text is always fetched live from bible-api.com.
+const DAILY_VERSE_REFS = [
+    "john 3:16","philippians 4:13","psalm 23:1","proverbs 3:5-6","joshua 1:9",
+    "romans 8:28","philippians 4:6","zephaniah 3:17","matthew 11:28","jeremiah 29:11",
+    "psalm 27:1","isaiah 40:31","1 corinthians 13:4","1 peter 5:7","psalm 118:24",
+    "psalm 23:4","matthew 5:16","john 14:6","ephesians 4:32","proverbs 18:10",
+    "psalm 37:4","galatians 2:20","psalm 107:1","isaiah 40:29","romans 15:13",
+    "psalm 119:105","matthew 6:33","psalm 139:14","matthew 19:26","philippians 4:7",
+    "romans 8:31",
+];
+
+const BIBLE_VERSE_HIDE_KEY = 'bibleVerseHideDate';
+const BIBLE_VERSE_CACHE_KEY = 'bibleVerseCache';
+
+function getTodayVerseRef() {
+    const now = new Date();
+    const dayOfYear = Math.floor(
+        (Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) -
+         Date.UTC(now.getUTCFullYear(), 0, 0)) / 86400000
+    );
+    return DAILY_VERSE_REFS[dayOfYear % DAILY_VERSE_REFS.length];
+}
+
+function getTodayDateString() {
+    const now = new Date();
+    return `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}-${now.getUTCDate()}`;
+}
+
+async function fetchVerseOfTheDay() {
+    const today = getTodayDateString();
+
+    // Use cached verse if it's from today
+    try {
+        const cached = JSON.parse(localStorage.getItem(BIBLE_VERSE_CACHE_KEY) || 'null');
+        if (cached && cached.date === today) return cached;
+    } catch (_) {}
+
+    const ref = getTodayVerseRef();
+    const url = `https://bible-api.com/${encodeURIComponent(ref)}?translation=kjv`;
+
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('API error');
+    const data = await response.json();
+
+    const verse = {
+        date: today,
+        text: data.text.trim().replace(/\n/g, ' '),
+        ref: data.reference,
+    };
+
+    localStorage.setItem(BIBLE_VERSE_CACHE_KEY, JSON.stringify(verse));
+    return verse;
+}
+
+async function showBibleVerseModal() {
+    const today = getTodayDateString();
+    const hideDate = localStorage.getItem(BIBLE_VERSE_HIDE_KEY);
+    if (hideDate === today) return;
+
+    const modal = document.getElementById('bibleVerseModal');
+    const loadingEl = document.getElementById('bibleVerseLoading');
+    const textEl = document.getElementById('bibleVerseText');
+    const refEl = document.getElementById('bibleVerseRef');
+
+    // Show modal with loading state
+    modal.classList.add('open');
+    document.body.classList.add('modal-open');
+    loadingEl.style.display = 'flex';
+    textEl.style.display = 'none';
+    refEl.style.display = 'none';
+
+    try {
+        const verse = await fetchVerseOfTheDay();
+        loadingEl.style.display = 'none';
+        textEl.textContent = verse.text;
+        refEl.textContent = verse.ref;
+        textEl.style.display = 'block';
+        refEl.style.display = 'block';
+    } catch (err) {
+        loadingEl.style.display = 'none';
+        textEl.textContent = 'Could not load today\'s verse. Please check your connection.';
+        textEl.style.display = 'block';
+    }
+
+    function closeModal() {
+        if (document.getElementById('bibleVerseDontShow').checked) {
+            localStorage.setItem(BIBLE_VERSE_HIDE_KEY, today);
+        }
+        modal.classList.remove('open');
+        document.body.classList.remove('modal-open');
+    }
+
+    document.getElementById('closeBibleVerseBtn').onclick = closeModal;
+    document.getElementById('closeBibleVerseModal').onclick = closeModal;
+    modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+}
+// --- End Bible Verse of the Day ---
+
+// --- PWA Install Prompt handled by js/pwa.js ---
+
 document.addEventListener('DOMContentLoaded', async function() {
     await generateDeviceId();
     clearCache();
+    showBibleVerseModal();
 
     const lastPage = sessionStorage.getItem('lastPageLoaded');
     if (lastPage && !isNaN(lastPage)) currentPage = parseInt(lastPage);
@@ -1137,7 +1241,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     document.getElementById('postNoteBtn')?.addEventListener('click', openPostModal);
     document.getElementById('mobilePostBtn')?.addEventListener('click', openPostModal);
-    document.querySelector('.close-btn')?.addEventListener('click', closePostModal);
+    document.querySelector('#postModal .close-btn')?.addEventListener('click', closePostModal);
     document.getElementById('noteForm')?.addEventListener('submit', submitNote);
     document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
     document.getElementById('menuToggle')?.addEventListener('click', toggleSidebar);
@@ -1176,24 +1280,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             document.body.classList.remove('modal-open');
         }
     });
-
-    const messageTextarea = document.getElementById("message");
-    if (messageTextarea) {
-        function autoResize(el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
-        messageTextarea.addEventListener("input", function() { autoResize(this); });
-        const postModalElement = document.getElementById("postModal");
-        if (postModalElement) {
-            const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.attributeName === "style") {
-                        const display = window.getComputedStyle(postModalElement).display;
-                        if (display !== "none") autoResize(messageTextarea);
-                    }
-                });
-            });
-            observer.observe(postModalElement, { attributes: true });
-        }
-    }
 
     repairDatabase();
 

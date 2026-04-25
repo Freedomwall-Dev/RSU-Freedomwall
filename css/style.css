@@ -133,6 +133,33 @@ body.modal-open {
     text-align: center;
 }
 
+/* Install App nav button — matches nav link appearance */
+.nav-install-btn {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: inherit;
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.nav-install-btn:hover {
+    background-color: rgba(46, 125, 50, 0.1);
+    color: var(--primary-color);
+}
+
+.nav-install-btn i {
+    margin-right: 8px;
+    width: 16px;
+    text-align: center;
+}
+
 .sidebar-footer {
     margin-top: auto;
     padding-top: 16px;
@@ -891,8 +918,22 @@ body.modal-open {
 
 .form-group textarea {
     min-height: 96px;
+    max-height: 180px;
     resize: none;
-    overflow-y: hidden;
+    overflow-y: auto;
+}
+
+.form-group textarea::-webkit-scrollbar {
+    width: 4px;
+}
+
+.form-group textarea::-webkit-scrollbar-thumb {
+    background-color: var(--primary-color);
+    border-radius: 10px;
+}
+
+.form-group textarea::-webkit-scrollbar-track {
+    background: transparent;
 }
 
 /* Color Options - Centered with Equal Spacing */
@@ -1599,6 +1640,116 @@ body.modal-open {
         padding: 0 1px;
     }
 }
+
+/* ── Bible Verse Modal ─────────────────────────────────────────────────────── */
+.bible-verse-modal-content {
+    max-width: 420px;
+    text-align: center;
+    padding: 28px 24px 20px;
+}
+
+.bible-verse-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.bible-verse-icon {
+    font-size: 2rem;
+    color: var(--primary-color);
+}
+
+.bible-verse-header h2 {
+    margin-bottom: 0;
+    font-size: 1.2rem;
+    color: var(--primary-color);
+}
+
+.bible-verse-body {
+    position: relative;
+    padding: 20px 20px 16px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.bible-verse-body::before {
+    content: '\201C';
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 5rem;
+    font-family: Georgia, serif;
+    color: var(--primary-color);
+    opacity: 0.18;
+    line-height: 1;
+    pointer-events: none;
+}
+
+[data-theme="dark"] .bible-verse-body::before {
+    opacity: 0.22;
+}
+
+.bible-verse-text {
+    font-size: 1.05rem;
+    line-height: 1.75;
+    font-style: italic;
+    color: var(--text-color);
+    margin: 0 0 14px 0;
+}
+
+.bible-verse-ref {
+    font-size: 0.88rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+    margin: 0;
+}
+
+.bible-verse-loading {
+    font-size: 0.9rem;
+    color: var(--text-color);
+    opacity: 0.6;
+    padding: 16px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.bible-verse-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+}
+
+.bible-verse-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.88rem;
+    color: var(--text-color);
+    opacity: 0.8;
+    cursor: pointer;
+}
+
+.bible-verse-checkbox-label input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--primary-color);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+#closeBibleVerseBtn {
+    width: 100%;
+    max-width: 200px;
+}
+/* ── End Bible Verse Modal ─────────────────────────────────────────────────── */
 
 /* Reduce motion for accessibility */
 @media (prefers-reduced-motion: reduce) {
