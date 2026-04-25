@@ -3,7 +3,7 @@
   "short_name": "RSU Freedomwall",
   "start_url": "/index.html",
   "display": "standalone",
-  "background_color": "#1e1e1e",
+  "background_color": "#ffffff",
   "theme_color": "#1e1e1e",
   "icons": [
     {
